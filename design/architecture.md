@@ -1,4 +1,4 @@
-# VoiceFromHeaven — 最小化架构设计文档 v1
+# VoiceFromHeaven — 最小化架构设计文档 v2
 
 ## 项目概述
 
@@ -6,46 +6,62 @@
 
 **项目名**: VoiceFromHeaven
 
+**愿景**: 让思念有回响。
+
 ---
 
-## 核心设计原则
+## 核心设计决策
 
-1. **最小化优先**: 只实现最核心的架构，后续可扩展
-2. **模块边界清晰**: 每个模块职责单一，通过接口通信
-3. **配置驱动**: 所有模块配置通过 JSON 文件管理
-4. **可测试性**: 每个模块可独立测试
+| 决策项 | 选择 |
+|--------|------|
+| 交互方式 | 语音输入 + 语音输出，前端降级支持文字 |
+| 前端技术栈 | React / Next.js |
+| LLM 接口 | 仅支持 OpenAI 兼容接口（base_url + api_key + model 配置） |
+| ASR | Fish Speech 本地 STT（最低延迟） |
+| TTS | Fish Speech 本地 TTS（支持情绪标签） |
+| 部署模式 | 先本地服务 + 远端 LLM API，逐步演进到全本地 |
+| 实现顺序 | 自顶向下：Agent → LLM → Soul → Voice → Config |
+| 语音交互 | 按住说话（Push-to-Talk） |
 
 ---
 
 ## 系统架构图
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    前端层 (Frontend)                         │
-│         对话窗口 + 系统设置(LLM Provider/API Key)            │
-└─────────────────────────┬───────────────────────────────────┘
-                          │ HTTP/SSE
-┌─────────────────────────▼───────────────────────────────────┐
-│                   Agent-Core (AgentLoop)                    │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │              Pipeline Architecture                      │ │
-│  │  Input → Preprocess → LLM → Postprocess → Output        │ │
-│  │                                                        │ │
-│  │  可扩展模块插槽 (Extensible Module Slots)               │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────────┬───────────────────────────────────┘
-              ┌───────────┼───────────┐
-              ▼           ▼           ▼
-        ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │   LLM    │ │   Soul   │ │  Voice   │
-        │  Module  │ │  Module  │ │  Module  │
-        └──────────┘ └──────────┘ └──────────┘
-              │           │           │
-              ▼           ▼           ▼
-        ┌──────────────────────────────────────────┐
-        │            Config Module                  │
-        │      (统一管理所有模块的 JSON 配置)        │
-        └──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                 Next.js 前端 (:3000)                       │
+│                                                          │
+│  /              首页（项目介绍、愿景）                    │
+│  /souls         灵魂列表（选择/创建）                     │
+│  /souls/[id]    灵魂档案（维度子页面）                    │
+│  /chat/[id]     对话界面（语音/文字双模）                 │
+│  /settings      系统配置（base_url/api_key/model）        │
+└─────────────────────────┬────────────────────────────────┘
+                          │ HTTP / SSE
+┌─────────────────────────▼────────────────────────────────┐
+│                FastAPI 后端 (:8000)                        │
+│                                                          │
+│  POST /chat/{soul_id}/stream    SSE 流式对话（音频出入）  │
+│  GET/PUT /settings              系统配置 CRUD             │
+│  GET /souls                     灵魂列表                  │
+│  GET/PUT /souls/{id}/dimensions  维度 md 编辑             │
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │              AgentLoop.run()                        │  │
+│  │                                                    │  │
+│  │  ASR (Fish Speech STT)                             │  │
+│  │    → Pipeline:                                     │  │
+│  │      [Preprocess 链]                               │  │
+│  │        ├─ soul_context   加载 Soul → System Prompt │  │
+│  │        ├─ circumstances  场景上下文注入              │  │
+│  │        ├─ emotion_detect 规则引擎情绪检测            │  │
+│  │      → LLM (OpenAI 兼容 API，流式生成)              │  │
+│  │      → [Postprocess 链]                             │  │
+│  │        ├─ quality_check  禁忌词/破设定检测           │  │
+│  │        ├─ emotion_inject TTS 情绪标签注入            │  │
+│  │    → TTS (Fish Speech TTS)                         │  │
+│  └────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -55,56 +71,59 @@
 ```
 voicefromheaven/
 ├── src/
-│   ├── main.py                      # 应用入口
+│   ├── main.py                      # FastAPI 入口 (:8000)
 │   │
 │   ├── config/                      # 配置模块
 │   │   ├── __init__.py
-│   │   ├── settings.py             # 配置类（统一管理）
+│   │   ├── settings.py             # Settings 单例，统一管理所有配置
 │   │   └── loader.py               # JSON 配置加载器
 │   │
 │   ├── llm/                         # LLM 模块
 │   │   ├── __init__.py
-│   │   ├── base.py                  # 抽象基类
-│   │   ├── manager.py               # LLM 管理器（工厂模式）
-│   │   └── providers/               # 多 Provider 实现
-│   │       ├── __init__.py
-│   │       ├── openai.py
-│   │       ├── anthropic.py
-│   │       ├── gemini.py
-│   │       └── ollama.py
+│   │   ├── client.py                # OpenAIClient: chat() + stream()
+│   │   └── manager.py               # LLMManager: 工厂创建 + test_connection()
 │   │
 │   ├── soul/                        # Soul 模块
 │   │   ├── __init__.py
-│   │   ├── profile.py               # 灵魂档案模型
-│   │   ├── loader.py                # 从 md 文件加载维度
-│   │   └── prompt_builder.py        # 将多维度 md 编译为 System Prompt
+│   │   ├── profile.py               # SoulProfile 数据类
+│   │   ├── loader.py                # 从 config/souls/{id}/*.md 加载
+│   │   └── prompt_builder.py        # 模板拼装 System Prompt
 │   │
 │   ├── agent/                       # Agent-Core 模块
 │   │   ├── __init__.py
-│   │   ├── loop.py                 # AgentLoop（主循环）
-│   │   ├── pipeline.py             # Pipeline 架构
-│   │   └── modules/                # 可扩展模块
+│   │   ├── loop.py                 # AgentLoop 主循环
+│   │   ├── pipeline.py             # Pipeline: 可扩展模块链
+│   │   └── modules/
 │   │       ├── __init__.py
-│   │       ├── preprocess.py
-│   │       ├── postprocess.py
-│   │       └── emotion_detector.py
+│   │       ├── base.py             # PipelineModule 抽象基类
+│   │       ├── preprocess/         # 预处理模块链
+│   │       │   ├── __init__.py
+│   │       │   ├── soul_context.py    # 加载 Soul Profile → System Prompt
+│   │       │   ├── circumstances.py   # 注入场景上下文
+│   │       │   ├── emotion_detect.py  # 规则引擎情绪检测
+│   │       │   └── history.py        # 对话历史管理（后期加）
+│   │       └── postprocess/        # 后处理模块链
+│   │           ├── __init__.py
+│   │           ├── quality_check.py   # 禁忌词/破设定检测
+│   │           ├── emotion_inject.py  # TTS 情绪标签注入
+│   │           └── fingerprint.py    # 语言指纹注入（后期加）
 │   │
 │   ├── voice/                       # Voice 模块
 │   │   ├── __init__.py
-│   │   ├── tts.py                  # 语音合成（Fish Speech）
-│   │   └── config.py               # 语音配置
+│   │   ├── asr.py                  # Fish Speech STT: audio → text
+│   │   └── tts.py                  # Fish Speech TTS: text → audio
 │   │
-│   └── api/                        # API 路由（可选）
+│   └── api/                        # API 路由
 │       ├── __init__.py
-│       └── routes.py
+│       └── routes.py               # chat, settings, souls 路由
 │
 ├── config/                          # 配置文件目录
-│   ├── llm.json                     # LLM 提供商配置
-│   ├── voice.json                   # 语音模块配置
-│   ├── app.json                     # 应用全局配置
+│   ├── llm.json                     # { base_url, api_key, model }
+│   ├── voice.json                   # { fish_speech_url, speaker }
+│   ├── app.json                     # { souls_path } 全局配置
 │   ├── circumstances.md             # 当前场景描述
-│   └── souls/                        # 灵魂档案数据（每个灵魂一个目录）
-│       └── demo/                     # 示例灵魂
+│   └── souls/                       # 灵魂档案数据
+│       └── {soul_id}/               # 每个灵魂一个目录
 │           ├── basic_info.md
 │           ├── personality.md
 │           ├── life_experiences.md
@@ -116,29 +135,44 @@ voicefromheaven/
 │           ├── linguistic_fingerprint.md
 │           └── knowledge_domain.md
 │
-├── tests/
-│   ├── test_config.py
+├── web/                             # Next.js 前端
+│   ├── app/
+│   │   ├── page.tsx                 # /         首页
+│   │   ├── souls/page.tsx           # /souls    灵魂列表
+│   │   ├── souls/[id]/page.tsx      # /souls/[id] 维度列表
+│   │   ├── souls/[id]/[dim]/page.tsx # 维度编辑
+│   │   ├── chat/[id]/page.tsx       # /chat     对话界面
+│   │   └── settings/page.tsx        # /settings 系统配置
+│   ├── components/
+│   │   ├── ChatWindow.tsx           # 对话窗口
+│   │   ├── VoiceButton.tsx          # 按住说话按钮
+│   │   ├── MessageBubble.tsx        # 消息气泡
+│   │   ├── SettingsPanel.tsx        # LLM 配置表单
+│   │   └── SoulEditor.tsx           # 维度 md 编辑器
+│   └── lib/
+│       └── api.ts                   # 后端 API 调用封装
+│
+├── tests/                           # 测试与源码模块一一对应
+│   ├── conftest.py
+│   ├── test_config/
+│   │   ├── test_loader.py
+│   │   └── test_settings.py
 │   ├── test_llm/
-│   │   ├── __init__.py
-│   │   ├── test_manager.py
-│   │   └── test_providers/
-│   │       ├── __init__.py
-│   │       └── test_openai.py
+│   │   └── test_client.py
 │   ├── test_soul/
-│   │   ├── __init__.py
-│   │   ├── test_profile.py
 │   │   ├── test_loader.py
 │   │   └── test_prompt_builder.py
 │   ├── test_agent/
-│   │   ├── __init__.py
 │   │   ├── test_loop.py
 │   │   ├── test_pipeline.py
 │   │   └── test_modules/
-│   │       ├── __init__.py
-│   │       ├── test_preprocess.py
-│   │       └── test_emotion_detector.py
+│   │       ├── test_soul_context.py
+│   │       ├── test_circumstances.py
+│   │       ├── test_emotion_detect.py
+│   │       ├── test_quality_check.py
+│   │       └── test_emotion_inject.py
 │   └── test_voice/
-│       ├── __init__.py
+│       ├── test_asr.py
 │       └── test_tts.py
 │
 ├── pyproject.toml
@@ -152,60 +186,51 @@ voicefromheaven/
 
 ### 1. Config 模块
 
-**职责**: 统一管理所有模块的 JSON 配置
-
 ```python
-# config/settings.py
+# settings.py — 单例，统一管理所有配置
+class Settings:
+    _instance: Settings | None = None
+    
+    def get() -> AppConfig
+    def update(partial: dict)   # 更新配置（会写回 JSON 文件）
+
+# 数据类
 @dataclass
 class AppConfig:
     llm: LLMConfig
     voice: VoiceConfig
     souls_path: Path
 
-@dataclass
+@dataclass 
 class LLMConfig:
-    provider: str              # openai | anthropic | gemini | ollama
+    base_url: str              # OpenAI 兼容 endpoint
     api_key: str
-    model: str
-    base_url: str | None = None
+    model: str                 # gpt-4o / claude-sonnet / 任意
 
 @dataclass
 class VoiceConfig:
-    provider: str             # fish_speech | ...
-    model_path: str
-    speaker: str
-
-# config/loader.py
-class ConfigLoader:
-    def load(config_path: Path) -> AppConfig
-    def reload() -> AppConfig   # 热重载配置
-
-# config/settings.py
-class Settings:
-    _instance: Settings | None = None
-
-    def get() -> AppConfig
-    def update(partial: dict)   # 更新部分配置
-
-# 用法
-config = Settings.get().llm
+    fish_speech_url: str       # Fish Speech 服务地址
+    speaker: str               # 默认说话人
 ```
 
-**配置示例**:
+**配置文件示例**:
 ```json
 // config/llm.json
 {
-  "provider": "openai",
+  "base_url": "https://api.openai.com/v1",
   "api_key": "sk-...",
-  "model": "gpt-4o",
-  "base_url": null
+  "model": "gpt-4o"
 }
 
 // config/voice.json
 {
-  "provider": "fish_speech",
-  "model_path": "./models/fish-speech",
+  "fish_speech_url": "http://localhost:8080",
   "speaker": "demo_speaker"
+}
+
+// config/app.json
+{
+  "souls_path": "config/souls"
 }
 ```
 
@@ -213,98 +238,151 @@ config = Settings.get().llm
 
 ### 2. LLM 模块
 
-**职责**: 封装底层 LLM，提供统一接口，支持多 Provider
+**只支持 OpenAI 兼容接口**，不做 Provider 特殊适配。
 
 ```python
-# llm/base.py
-class LLMClient(ABC):
-    @abstractmethod
-    async def chat(messages: list[ChatMessage]) -> str: ...
+# client.py
+class LLMClient:
+    def __init__(self, base_url: str, api_key: str, model: str)
+    async def chat(self, messages: list[dict]) -> str
+    async def stream(self, messages: list[dict]) -> AsyncGenerator[str]
 
-    @abstractmethod
-    async def stream(messages: list[ChatMessage]) -> AsyncGenerator[str]: ...
-
-# llm/manager.py
+# manager.py
 class LLMManager:
     def get_client(config: LLMConfig) -> LLMClient
-
     async def test_connection(config: LLMConfig) -> bool
-
-# llm/providers/openai.py
-class OpenAIClient(LLMClient):
-    def __init__(self, config: LLMConfig)
-    async def chat(messages) -> str
-    async def stream(messages) -> AsyncGenerator[str]
 ```
-
-**支持的 Provider**:
-| Provider | 说明 |
-|----------|------|
-| `openai` | OpenAI API (GPT-4o, GPT-4o-mini) |
-| `anthropic` | Anthropic Claude |
-| `gemini` | Google Gemini |
-| `ollama` | 本地模型 (无需 API Key) |
 
 ---
 
 ### 3. Soul 模块
 
-**职责**: 通过多维度构建完整的数字人格，每个维度一个 md 文件
-
 ```python
-# soul/profile.py
+# profile.py
 @dataclass
 class SoulProfile:
     soul_id: str
-    dimensions: dict[str, str]  # dimension_name -> md_content
+    dimensions: dict[str, str]  # dimension_name → md_content
 
-# soul/loader.py
+# loader.py — 从 config/souls/{soul_id}/*.md 加载
 class SoulLoader:
-    def load(soul_id: str) -> SoulProfile
+    def load(self, soul_id: str) -> SoulProfile
+    def load_dimension(self, soul_id: str, dimension: str) -> str
+    def save_dimension(self, soul_id: str, dimension: str, content: str)
 
-    def load_dimension(soul_id: str, dimension: str) -> str
-
-    def save_dimension(soul_id: str, dimension: str, content: str)
-
-# soul/prompt_builder.py
+# prompt_builder.py — 模板拼装，不用 LLM
 class SoulPromptBuilder:
-    def build(profile: SoulProfile) -> str
-    # 将 10 个维度的 md 内容编译成 System Prompt
+    def build(self, profile: SoulProfile, circumstances: str) -> str
 ```
 
-**维度定义** (10个维度):
+**Soul Prompt 缓存策略**:
+- 首次加载 → 模板拼装 → 内存缓存
+- Soul 维度更新 → 主动失效 → 下次请求重新拼装
+- 不调用 LLM，零成本
 
-| 维度 | 文件名 | 说明 |
-|------|--------|------|
-| basic_info | basic_info.md | 姓名/性别/年龄/籍贯/职业/生卒 |
-| personality | personality.md | 性格标签/MBTI/情绪表达方式 |
-| life_experiences | life_experiences.md | 人生经历时间线 |
-| relationships | relationships.md | 社会关系图 |
-| hobbies | hobbies.md | 爱好与熟练度 |
-| special_habits | special_habits.md | 特殊习惯 |
-| values_beliefs | values_beliefs.md | 价值观与世界观 |
-| emotional_anchors | emotional_anchors.md | 情感锚点 |
-| linguistic_fingerprint | linguistic_fingerprint.md | 语言指纹 |
-| knowledge_domain | knowledge_domain.md | 知识与专业边界 |
+---
 
-**Soul 档案目录结构**:
+### 4. Agent-Core 模块
+
+```python
+# loop.py
+class AgentLoop:
+    def __init__(self, llm: LLMClient, soul_loader: SoulLoader, voice: VoiceService)
+    
+    async def run(self, soul_id: str, audio: bytes) -> AsyncGenerator[bytes]:
+        text = await self.voice.asr.transcribe(audio)     # ASR
+        ctx = PipelineContext(soul_id=soul_id, user_message=text)
+        ctx = await self.pipeline.execute(ctx)            # Pipeline
+        async for audio_chunk in self.voice.tts.speak(ctx.response):
+            yield audio_chunk                             # TTS output
+
+# pipeline.py
+class Pipeline:
+    def add_preprocess(self, module: PipelineModule)
+    def add_postprocess(self, module: PipelineModule)
+    async def execute(self, ctx: PipelineContext) -> PipelineContext
+
+class PipelineContext:
+    soul_id: str
+    user_message: str
+    soul_profile: SoulProfile | None
+    circumstances: str
+    emotion: EmotionTag | None
+    system_prompt: str | None
+    llm_messages: list[dict]
+    response: str
+    tts_emotion_tags: list[str]
 ```
-config/souls/{soul_id}/
-├── basic_info.md            # 姓名/性别/年龄/籍贯/职业/生卒
-├── personality.md          # 性格标签/MBTI/情绪表达方式
-├── life_experiences.md     # 人生经历时间线
-├── relationships.md        # 社会关系图
-├── hobbies.md              # 爱好与熟练度
-├── special_habits.md       # 特殊习惯
-├── values_beliefs.md       # 价值观与世界观
-├── emotional_anchors.md     # 情感锚点
-├── linguistic_fingerprint.md  # 语言指纹
-└── knowledge_domain.md     # 知识与专业边界
+
+**Pipeline 执行流程**:
+
+```
+Input (text from ASR)
+  → Preprocess 链:
+      [soul_context]     加载 10 维度 → 构建 System Prompt
+      [circumstances]    注入场景描述
+      [emotion_detect]   规则引擎检测情绪
+  → LLM (OpenAI 兼容 API，流式生成)
+  → Postprocess 链:
+      [quality_check]    禁忌词 + 破设定检测
+      [emotion_inject]   决定 TTS 情绪标签（如 [gentle]）
+  → Output (text + emotion tags) → TTS
 ```
 
-**MD 文件格式规范**:
+---
 
-所有 md 文件统一采用以下格式：
+### 5. Voice 模块
+
+```python
+# asr.py
+class ASRService:
+    def __init__(self, fish_speech_url: str)
+    async def transcribe(self, audio: bytes) -> str
+
+# tts.py
+class TTSService:
+    def __init__(self, fish_speech_url: str, speaker: str)
+    async def speak(self, text: str, emotion: str = "neutral") -> AsyncGenerator[bytes]
+    # emotion 参数 → Fish Speech 情绪标签
+
+class VoiceService:
+    def __init__(self, config: VoiceConfig)
+    asr: ASRService
+    tts: TTSService
+```
+
+---
+
+### 6. 前端设计
+
+**页面路由**:
+
+| 路由 | 说明 |
+|------|------|
+| `/` | 首页 — 项目介绍、愿景文案、引导按钮 |
+| `/souls` | 灵魂列表 — 选择/创建灵魂 |
+| `/souls/[id]` | 灵魂档案 — 10个维度列表 |
+| `/souls/[id]/[dim]` | 维度编辑 — Markdown 编辑器，保存刷新缓存 |
+| `/chat/[id]` | 对话界面 — 语音/文字双模输入 |
+| `/settings` | 系统配置 — base_url/api_key/model |
+
+**对话交互**: 按住说话（Push-to-Talk），松开发送音频到后端，SSE 流式接收音频回复。语音失败自动降级为文字输入。
+
+**SettingsPanel 配置项**:
+
+| 字段 | 说明 |
+|------|------|
+| API Base URL | OpenAI 兼容端点地址 |
+| API Key | 密钥 |
+| Model | 模型名 |
+| Fish Speech URL | 服务地址 |
+| Speaker | 说话人 |
+
+---
+
+## MD 文件格式规范
+
+所有维度 md 文件统一格式：
 
 ```markdown
 # 维度中文名称
@@ -317,33 +395,16 @@ config/souls/{soul_id}/
 维度描述文本，可以包含多行内容。
 ```
 
-例如 `basic_info.md`:
-```markdown
-# 基本信息
+**circumstances.md 格式**:
 
-## identity
-name: 王奶奶
-gender: female
-age: 75
-birthplace: 浙江杭州
-occupation: 退休教师
-birth_year: 1948
-death_year: 2023
-
-## description
-王奶奶是一位慈祥的退休小学教师，在杭州生活了大半辈子。
-喜欢给孩子们讲故事，擅长做红烧肉。
-```
-
-**config/circumstances.md 场景描述格式**:
 ```markdown
 # 当前场景
 
 ## context
-- 用户身份: [与逝者的关系]
-- 当前时间: [对话发生的时间]
-- 用户情绪: [当前情绪状态]
-- 对话目的: [为什么发起这次对话]
+- user_role: [与逝者的关系]
+- current_time: [对话发生的时间]
+- user_emotion: [当前情绪状态]
+- purpose: [为什么发起这次对话]
 
 ## description
 详细描述这次对话的背景和情境。
@@ -351,179 +412,45 @@ death_year: 2023
 
 ---
 
-### 4. Agent-Core 模块
+## 错误处理
 
-**职责**: Agent 循环 + Pipeline 架构 + 可扩展模块
+| 场景 | 处理 |
+|------|------|
+| 麦克风被拒 | 前端提示，降级为文字输入 |
+| ASR 超时/异常 | 返回提示"语音识别失败，请再试一次" |
+| LLM API 超时/限流/Key 无效 | SSE 中断，前端提示"连接中断，请检查配置" |
+| TTS 异常 | 降级返回文字回复 |
+| 无效 soul_id | 返回 404 |
+| 配置缺失 | 启动时报错，明确提示缺失项 |
 
-```python
-# agent/loop.py
-class AgentLoop:
-    def __init__(
-        self,
-        llm_client: LLMClient,
-        soul_loader: SoulLoader,
-        config: AppConfig
-    )
-
-    async def run(
-        soul_id: str,
-        user_message: str,
-        session_id: str
-    ) -> AsyncGenerator[str]:
-        # Pipeline: Input → Preprocess → LLM → Postprocess → Output
-        ...
-
-# agent/pipeline.py
-class Pipeline:
-    def __init__(self)
-    def add_module(name: str, module: PipelineModule)
-    async def execute(ctx: PipelineContext) -> PipelineContext
-
-class PipelineContext:
-    soul_id: str
-    session_id: str
-    user_message: str
-    soul_profile: SoulProfile | None
-    llm_messages: list[ChatMessage]
-    response: str
-
-# agent/modules/preprocess.py
-class PreprocessModule(PipelineModule):
-    async def process(ctx: PipelineContext) -> PipelineContext
-    # 职责: 加载 Soul Profile, 组装 Prompt
-
-# agent/modules/emotion_detector.py
-class EmotionDetectorModule(PipelineModule):
-    async def process(ctx: PipelineContext) -> PipelineContext
-    # 职责: 检测用户情绪 (规则引擎, ~5ms)
-
-# agent/modules/postprocess.py
-class PostprocessModule(PipelineModule):
-    async def process(ctx: PipelineContext) -> PipelineContext
-    # 职责: 输出质量验证, 指纹注入
-```
+**不做**: 不重试 LLM、不降级 Provider、内部模块不传播错误。
 
 ---
 
-### 5. Voice 模块
+## 测试策略
 
-**职责**: 语音合成 (使用 Fish Speech)
-
-```python
-# voice/tts.py
-class TTSService:
-    def __init__(self, config: VoiceConfig)
-
-    async def speak(
-        text: str,
-        speaker: str | None = None
-    ) -> AsyncGenerator[bytes]:
-        # 流式合成音频
-        ...
-
-    async def speak_sync(text: str) -> bytes
-    # 同步合成完整音频
-```
+- 单元测试 Mock 所有外部依赖（LLM API、Fish Speech、文件 IO）
+- 每个模块独立可测
+- AgentLoop 做集成测试（Mock LLM + Mock Voice）
+- 测试目录与源码模块一一对应
 
 ---
 
-### 6. 前端设计
+## 实施顺序
 
-**页面**:
-- `/` - 首页
-- `/chat/[soul_id]` - 聊天界面
-- `/settings` - 系统设置 (LLM 配置, API Key)
-- `/souls/[soul_id]` - 灵魂档案管理
-
-**核心组件**:
-```tsx
-// components/ChatWindow.tsx
-function ChatWindow({ soulId }) {
-  const [messages, setMessages] = useState([])
-  const [input, setInput] = useState('')
-
-  const sendMessage = async () => {
-    // 调用后端 API
-  }
-
-  return (
-    <div className="chat-container">
-      <div className="messages">
-        {messages.map(m => (
-          <div key={m.id} className={m.role}>
-            {m.content}
-          </div>
-        ))}
-      </div>
-      <div className="input-area">
-        <input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && sendMessage()}
-        />
-        <button onClick={sendMessage}>发送</button>
-      </div>
-    </div>
-  )
-}
-
-// components/SettingsPanel.tsx
-function SettingsPanel() {
-  const [llmConfig, setLLMConfig] = useState({
-    provider: 'openai',
-    apiKey: '',
-    model: 'gpt-4o'
-  })
-
-  return (
-    <div className="settings">
-      <h2>LLM 配置</h2>
-      <select value={llmConfig.provider}>
-        <option value="openai">OpenAI</option>
-        <option value="anthropic">Anthropic</option>
-        <option value="gemini">Google Gemini</option>
-        <option value="ollama">Ollama (本地)</option>
-      </select>
-      <input
-        type="password"
-        placeholder="API Key"
-        value={llmConfig.apiKey}
-        onChange={e => setLLMConfig({...llmConfig, apiKey: e.target.value})}
-      />
-      <input
-        placeholder="Model"
-        value={llmConfig.model}
-        onChange={e => setLLMConfig({...llmConfig, model: e.target.value})}
-      />
-    </div>
-  )
-}
-```
+1. **Agent + LLM + Soul** — 核心对话链路（文字输入 → 文字输出）
+2. **Voice** — 接入 Fish Speech ASR + TTS
+3. **Config** — 统一配置管理
+4. **Frontend** — Next.js 页面 + 组件
+5. **联调** — 端到端语音对话
 
 ---
 
-## 实施计划
+## 不做的（当前阶段）
 
-### Phase 1: 基础架构
-- [ ] 项目初始化 (pyproject.toml, requirements.txt)
-- [ ] Config 模块 (JSON 配置加载 + 测试 tests/test_config.py)
-- [ ] LLM 模块 (Manager + OpenAI Provider + 测试 tests/test_llm/)
-- [ ] Soul 模块 (Profile + Loader + PromptBuilder + 测试 tests/test_soul/)
-- [ ] Agent-Core (Loop + Pipeline + 测试 tests/test_agent/)
-- [ ] 前端基础 (ChatWindow + SettingsPanel)
-
-### Phase 2: 语音模块
-- [ ] TTS Service 接口定义 + 测试 tests/test_voice/
-
-### Phase 3: 高级功能
-- [ ] 其他 LLM Provider (Anthropic, Gemini, Ollama)
-- [ ] Emotion Detector 模块
-- [ ] 记忆模块 (短期 + 长期)
-
----
-
-## 验证方式
-
-1. **单元测试**: 每个模块独立测试
-2. **集成测试**: 端到端对话流程
-3. **手动验证**: 启动应用, 创建灵魂, 进行对话
+- 多 Provider 适配（只支持 OpenAI 兼容接口）
+- 记忆模块（短期/长期/情节）
+- LLM 主动工具调用
+- 数据持久化（PostgreSQL/Redis）
+- Docker 部署
+- 用户认证
