@@ -8,9 +8,7 @@ class LLMManager:
 
     @staticmethod
     def get_client(config: LLMConfig) -> LLMClient:
-        """工厂方法，创建 LLM 客户端"""
-        if not config.api_key:
-            raise ValueError("API Key is not configured. Please set it in settings.")
+        """工厂方法，创建 LLM 客户端（允许空 API Key，实际请求时校验）"""
         if not config.base_url:
             raise ValueError("API Base URL is not configured.")
         return LLMClient(

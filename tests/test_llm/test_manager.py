@@ -10,13 +10,11 @@ class TestLLMManager:
         client = LLMManager.get_client(config)
         assert client is not None
 
-    def test_get_client_no_api_key_raises(self):
+    def test_get_client_allows_empty_api_key(self):
+        """允许空 API Key 创建客户端（启动时不校验，实际请求时由服务端返回错误）"""
         config = LLMConfig(base_url="https://api.test.com/v1", api_key="", model="gpt-4o")
-        try:
-            LLMManager.get_client(config)
-            assert False, "Should have raised"
-        except ValueError as e:
-            assert "API Key" in str(e)
+        client = LLMManager.get_client(config)
+        assert client is not None
 
     def test_get_client_no_base_url_raises(self):
         config = LLMConfig(base_url="", api_key="sk-test", model="gpt-4o")

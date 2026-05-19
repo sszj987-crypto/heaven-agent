@@ -1,3 +1,5 @@
 *.DS_Store
-app/.venv
-app
+__pycache__/
+*.pyc
+.pytest_cache/
+.pids
