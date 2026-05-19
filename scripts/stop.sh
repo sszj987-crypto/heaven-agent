@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PID_FILE="$ROOT/.pids"
 
 if [ ! -f "$PID_FILE" ]; then

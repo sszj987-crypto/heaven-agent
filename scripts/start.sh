@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PID_FILE="$ROOT/.pids"
 
 # 检查是否已在运行
@@ -34,4 +34,4 @@ echo "===== VoiceFromHeaven 已启动 ====="
 echo "  前端: http://localhost:3000"
 echo "  后端: http://localhost:8000"
 echo "  PID 文件: $PID_FILE"
-echo "  停止服务: ./stop.sh"
+echo "  停止服务: ./scripts/stop.sh"
