@@ -12,7 +12,7 @@ class TestSoulContextModule:
 
         # Mock soul_loader
         profile = SoulProfile()
-        profile.dimensions["basic_info"] = "# 基本信息\n## identity\nname: 王奶奶\n## description\n慈祥。"
+        profile.dimensions["basic_info"] = "# 基本信息\n## identity\n姓名: 王奶奶\n## description\n慈祥。"
         self._mock_loader = MagicMock()
         self._mock_loader.load.return_value = profile
 

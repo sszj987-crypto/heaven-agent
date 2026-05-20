@@ -10,7 +10,7 @@ class TestSoulProfile:
 
     def test_name_extraction(self):
         p = SoulProfile()
-        p.dimensions["basic_info"] = "# 基本信息\n## identity\nname: 王奶奶\n## description"
+        p.dimensions["basic_info"] = "# 基本信息\n## identity\n姓名: 王奶奶\n## description"
         assert p.name == "王奶奶"
 
     def test_name_no_basic_info(self):

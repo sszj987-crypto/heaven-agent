@@ -26,7 +26,7 @@ class TestMemoryPersistModule:
     @pytest.mark.asyncio
     async def test_writes_daily_file(self):
         profile = SoulProfile()
-        profile.dimensions["basic_info"] = "# 基本信息\n## identity\nname: 王奶奶\n## description\n慈祥。"
+        profile.dimensions["basic_info"] = "# 基本信息\n## identity\n姓名: 王奶奶\n## description\n慈祥。"
 
         ctx = PipelineContext(user_message="奶奶你好")
         ctx.soul_profile = profile
@@ -46,7 +46,7 @@ class TestMemoryPersistModule:
     @pytest.mark.asyncio
     async def test_appends_to_existing_file(self):
         profile = SoulProfile()
-        profile.dimensions["basic_info"] = "# 基本信息\n## identity\nname: 测试\n## description"
+        profile.dimensions["basic_info"] = "# 基本信息\n## identity\n姓名: 测试\n## description"
 
         ctx1 = PipelineContext(user_message="第一条消息")
         ctx1.soul_profile = profile

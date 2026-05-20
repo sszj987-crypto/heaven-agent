@@ -63,6 +63,12 @@ class Settings:
                 setattr(self._config.voice, key, value)
         self._save_json("voice.json", self._config.voice)
 
+    def update_circumstances(self, content: str):
+        """更新场景描述并写回 circumstances.md"""
+        self._circumstances = content
+        path = self._config_dir / "circumstances.md"
+        path.write_text(content)
+
     def _save_json(self, filename: str, dataclass_instance):
         from dataclasses import asdict
         path = self._config_dir / filename

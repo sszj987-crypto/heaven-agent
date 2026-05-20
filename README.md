@@ -7,7 +7,7 @@
 ## 架构
 
 ```
-前端 (Next.js :3000)  ──HTTP/SSE──▶  后端 (FastAPI :8000)
+前端 (Next.js :3326)  ──HTTP/SSE──▶  后端 (FastAPI :8326)
                                        │
      ┌─────────────────────────────────┼──────────────────────┐
      │                                 │                      │
@@ -37,7 +37,7 @@ pip install -r requirements.txt
 ./scripts/start.sh
 
 # 4. 打开浏览器
-# http://localhost:3000
+# http://localhost:3326
 
 # 5. 停止
 ./scripts/stop.sh

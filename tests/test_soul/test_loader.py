@@ -12,7 +12,7 @@ class TestSoulLoader:
 
         # 创建几个维度文件
         (self._soul_path / "basic_info.md").write_text(
-            "# 基本信息\n## identity\nname: 王奶奶\n## description\n慈祥的老人。"
+            "# 基本信息\n## identity\n姓名: 王奶奶\n## description\n慈祥的老人。"
         )
         (self._soul_path / "personality.md").write_text(
             "# 性格\n## identity\n## description\n温和善良。"

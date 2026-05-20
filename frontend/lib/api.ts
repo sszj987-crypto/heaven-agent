@@ -1,4 +1,4 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8326";
 
 export interface SoulProfile {
   dimensions: Record<string, string>;
@@ -7,7 +7,34 @@ export interface SoulProfile {
 export interface Settings {
   llm: { base_url: string; model: string; api_key: string };
   voice: { fish_speech_url: string };
-  circumstances: string;
+}
+
+export interface SceneOption {
+  key: string;
+  label: string;
+  description: string;
+  prompt: string;
+}
+
+export interface CircumstancesData {
+  content: string;
+  scene: string;
+  scenes: SceneOption[];
+}
+
+export async function fetchCircumstances(): Promise<CircumstancesData> {
+  const res = await fetch(`${BASE}/soul/circumstances`);
+  if (!res.ok) throw new Error(`Failed to fetch circumstances: ${res.status}`);
+  return res.json();
+}
+
+export async function updateCircumstances(content: string): Promise<void> {
+  const res = await fetch(`${BASE}/soul/circumstances`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`Failed to update circumstances: ${res.status}`);
 }
 
 export async function fetchSettings(): Promise<Settings> {
@@ -19,6 +46,20 @@ export async function fetchSettings(): Promise<Settings> {
 export async function updateSettings(data: Partial<{ llm: Record<string, string>; voice: Record<string, string> }>) {
   const res = await fetch(`${BASE}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
   if (!res.ok) throw new Error(`Failed to update settings: ${res.status}`);
+}
+
+export async function uploadVoiceSample(audioBlob: Blob): Promise<void> {
+  const formData = new FormData();
+  formData.append("audio", audioBlob, "reference.wav");
+  formData.append("name", "soul_voice");
+  const res = await fetch(`${BASE}/settings/voice/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    throw new Error((detail.detail as string) || `声纹上传失败: ${res.status}`);
+  }
 }
 
 export async function testLLMConnection(): Promise<boolean> {

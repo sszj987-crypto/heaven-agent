@@ -1,6 +1,7 @@
 from ..base import PipelineModule
 from ...context import PipelineContext, TTSConfig
 from ...pipeline import Pipeline
+from ....config.settings import Settings
 
 
 @Pipeline.register(slot="postllm", order=2)
@@ -20,5 +21,6 @@ class EmotionInjectModule(PipelineModule):
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         emo_type = ctx.emotion.type if ctx.emotion else "neutral"
         params = self._TTS_PARAMS.get(emo_type, self._TTS_PARAMS["neutral"])
+        params["speaker"] = Settings.get().voice.speaker
         ctx.tts_config = TTSConfig(**params)
         return ctx

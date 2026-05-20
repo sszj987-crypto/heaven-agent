@@ -13,6 +13,7 @@ class LLMConfig:
 @dataclass
 class VoiceConfig:
     fish_speech_url: str = "http://localhost:8080"
+    speaker: str = ""  # Fish Speech 说话人/音色 ID
 
 
 @dataclass

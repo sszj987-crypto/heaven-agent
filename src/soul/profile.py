@@ -25,11 +25,11 @@ class SoulProfile:
 
     @property
     def name(self) -> str:
-        """从 basic_info 中提取姓名（简单解析）"""
+        """从 basic_info 中提取姓名"""
         content = self.dimensions.get("basic_info", "")
         for line in content.split("\n"):
-            if line.startswith("name:"):
-                return line.split(":", 1)[1].strip()
+            if line.startswith("姓名:") or line.startswith("姓名："):
+                return line.split(":", 1)[-1].split("：", 1)[-1].strip()
         return "未知"
 
     @property

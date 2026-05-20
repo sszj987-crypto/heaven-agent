@@ -24,8 +24,11 @@ export default function ChatPage() {
       const { audioBlob, responseText } = await sendTextMessage(text);
       setMessages((prev) => [...prev, { role: "assistant", content: responseText }]);
       if (audioBlob.size > 0) playAudioBlob(audioBlob);
-    } catch {
-      setMessages((prev) => [...prev, { role: "assistant", content: "[回复失败，请检查后端服务是否启动]" }]);
+    } catch (err) {
+      const reason = err instanceof TypeError && err.message === "Failed to fetch"
+        ? "无法连接后端，请确认后端服务已启动 (localhost:8326)"
+        : (err instanceof Error ? err.message : "未知错误");
+      setMessages((prev) => [...prev, { role: "assistant", content: `[回复失败] ${reason}` }]);
     } finally {
       setLoading(false);
     }

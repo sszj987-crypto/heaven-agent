@@ -19,7 +19,10 @@ export default function SettingsPage() {
         setLLMForm({ base_url: s.llm.base_url, model: s.llm.model, api_key: s.llm.api_key });
         setVoiceUrl(s.voice.fish_speech_url);
       })
-      .catch(() => setMsg("无法加载配置"));
+      .catch(() => {
+        setMsg("无法加载配置，请确认后端服务已启动");
+        setSettings({ llm: { base_url: "", model: "", api_key: "" }, voice: { fish_speech_url: "" } });
+      });
   }, []);
 
   const handleSaveLLM = useCallback(async () => {
@@ -123,16 +126,20 @@ export default function SettingsPage() {
 
       {/* Voice 配置 */}
       <section className="space-y-4">
-        <h3 className="text-sm text-white/50 uppercase tracking-wider">语音 (Fish Speech)</h3>
+        <h3 className="text-sm text-white/50 uppercase tracking-wider">语音</h3>
 
         <label className="block">
-          <span className="text-xs text-white/30">Fish Speech URL</span>
+          <span className="text-xs text-white/30">语音服务 URL</span>
           <input
             value={voiceUrl}
             onChange={(e) => setVoiceUrl(e.target.value)}
             className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white/30"
           />
         </label>
+
+        <p className="text-xs text-white/15">
+          音色配置（录制/上传逝者声音样本）请在「灵魂档案 → 语音音色」中进行
+        </p>
 
         <button
           onClick={handleSaveVoice}
@@ -144,16 +151,6 @@ export default function SettingsPage() {
       </section>
 
       {msg && <p className="text-sm text-white/40">{msg}</p>}
-
-      {/* Circumstances */}
-      {settings.circumstances && (
-        <section className="space-y-2">
-          <h3 className="text-sm text-white/50 uppercase tracking-wider">当前场景</h3>
-          <pre className="text-sm text-white/30 whitespace-pre-wrap bg-white/5 rounded-lg p-3 border border-white/5">
-            {settings.circumstances}
-          </pre>
-        </section>
-      )}
     </div>
   );
 }

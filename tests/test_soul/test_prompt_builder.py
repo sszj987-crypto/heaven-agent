@@ -6,7 +6,7 @@ class TestSoulPromptBuilder:
     def setup_method(self):
         self._builder = SoulPromptBuilder()
         self._profile = SoulProfile()
-        self._profile.dimensions["basic_info"] = "# 基本信息\n## identity\nname: 王奶奶\n## description\n慈祥的退休教师。"
+        self._profile.dimensions["basic_info"] = "# 基本信息\n## identity\n姓名: 王奶奶\n## description\n慈祥的退休教师。"
         self._profile.dimensions["personality"] = "# 性格\n## identity\n## description\n温和、善良、有耐心。"
         self._profile.dimensions["linguistic_fingerprint"] = "# 语言特征\n## identity\n## description\n喜欢说'乖孩子'。"
         self._profile.dimensions["values_beliefs"] = "# 价值观\n## identity\n## description\n家庭最重要。"
@@ -44,7 +44,7 @@ class TestSoulPromptBuilder:
         assert "# 标题" not in result
 
     def test_strip_title_keeps_h2(self):
-        result = self._builder._strip_title("# 标题\n## identity\nname: test\n## description\n描述。")
+        result = self._builder._strip_title("# 标题\n## identity\n姓名: test\n## description\n描述。")
         assert "## identity" in result
         assert "## description" in result
 
