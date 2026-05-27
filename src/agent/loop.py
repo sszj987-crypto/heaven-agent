@@ -1,4 +1,4 @@
-import re
+import json
 import time
 from pathlib import Path
 from typing import AsyncGenerator
@@ -23,22 +23,26 @@ _DEFAULT_INSTRUCT = "用平静自然的语气说话。"
 
 
 def _parse_llm_response(raw: str) -> tuple[str, str]:
-    """从 LLM 响应中提取 回复文本 和 语音语气指令。"""
-    reply_match = re.search(r'\[回复\]\s*(.*?)\s*\[/回复\]', raw, re.DOTALL)
-    instruct_match = re.search(r'\[语音语气\]\s*(.*?)\s*\[/语音语气\]', raw, re.DOTALL)
+    """
+    从 LLM 响应中提取 reply 和 instruct。
+    期望 JSON 格式：{"reply": "...", "instruct": "..."}。
+    解析失败时整段文本作为 reply，使用默认语气。
+    """
+    text = raw.strip()
 
-    reply = reply_match.group(1).strip() if reply_match else raw.strip()
-    instruct = instruct_match.group(1).strip() if instruct_match else _DEFAULT_INSTRUCT
-
-    # 兜底：如果回复文本中残留标签（LLM 未严格按格式输出），清理掉
-    if not reply_match:
-        log.warning("LLM 响应未匹配到 [回复] 标签，使用原始文本作为回复")
-        reply = re.sub(r'\[语音语气\].*?\[/语音语气\]', '', reply, flags=re.DOTALL).strip()
-    if not instruct_match:
-        log.warning("LLM 响应未匹配到 [语音语气] 标签，使用默认语气")
-
-    log.debug("解析 LLM 响应: reply=%d chars, instruct=%s", len(reply), instruct)
-    return reply, instruct
+    try:
+        data = json.loads(text)
+        reply = str(data.get("reply", "")).strip()
+        instruct = str(data.get("instruct", _DEFAULT_INSTRUCT)).strip()
+        if reply:
+            log.debug("JSON 解析成功: reply=%d chars, instruct=%s", len(reply), instruct)
+            return reply, instruct or _DEFAULT_INSTRUCT
+        else:
+            log.warning("JSON 中 reply 为空")
+            return text, _DEFAULT_INSTRUCT
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        log.warning("LLM 响应不是合法 JSON，使用原始文本作为回复")
+        return text, _DEFAULT_INSTRUCT
 
 
 class AgentLoop:

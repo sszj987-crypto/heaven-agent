@@ -24,7 +24,10 @@ class LLMClient:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._model = model
-        log.info("LLMClient 初始化, base_url=%s, model=%s", self._base_url, self._model)
+        # 强制 JSON 输出（OpenAI/DeepSeek 兼容 API 均支持）
+        self._response_format = {"type": "json_object"}
+        log.info("LLMClient 初始化, base_url=%s, model=%s, response_format=json_object",
+                 self._base_url, self._model)
 
     @property
     def model(self) -> str:
@@ -49,6 +52,7 @@ class LLMClient:
                     json={
                         "model": self._model,
                         "messages": messages,
+                        "response_format": self._response_format,
                     },
                 )
                 response.raise_for_status()
@@ -89,6 +93,7 @@ class LLMClient:
                         "model": self._model,
                         "messages": messages,
                         "stream": True,
+                        "response_format": self._response_format,
                     },
                 ) as response:
                     response.raise_for_status()
