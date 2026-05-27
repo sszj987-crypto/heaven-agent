@@ -18,7 +18,20 @@ class TestTTSService:
         assert not self._tts.has_reference
 
     def test_save_reference_audio(self):
-        self._tts.save_reference_audio(b"fake audio data")
+        # 生成一段有效的 WAV 数据：16-bit PCM, mono, 24kHz, 0.5s 静音
+        import struct
+        sample_rate = 24000
+        duration = 0.5
+        num_samples = int(sample_rate * duration)
+        raw_samples = b"".join(struct.pack("<h", 0) for _ in range(num_samples))
+        wav_header = struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF", 36 + len(raw_samples), b"WAVE", b"fmt ", 16,
+            1, 1, sample_rate, sample_rate * 2, 2, 16,
+            b"data", len(raw_samples),
+        )
+        wav_bytes = wav_header + raw_samples
+        self._tts.save_reference_audio(wav_bytes)
         assert self._tts.has_reference
         assert self._tts._ref_audio_path.exists()
 
