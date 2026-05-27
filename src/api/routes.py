@@ -116,14 +116,13 @@ async def chat_text(body: dict):
         raise HTTPException(status_code=502, detail=detail)
 
     response_text = results[0] if results else ""
-    tts_config = results[1] if len(results) > 1 else TTSConfig()
-    log.info("LLM 响应长度: %d 字符, TTS 配置: emotion=%s speed=%.2f",
-             len(response_text), tts_config.emotion, tts_config.speed)
+    instruct_text = results[1] if len(results) > 1 else "用平静自然的语气说话。"
+    log.info("LLM 响应长度: %d 字符, instruct_text=%s",
+             len(response_text), instruct_text)
 
     return {
         "response_text": response_text,
-        "emotion": tts_config.emotion,
-        "speed": tts_config.speed,
+        "instruct_text": instruct_text,
         "has_voice": tts.has_reference,
     }
 
@@ -179,14 +178,13 @@ async def chat_voice(audio: UploadFile = File(...)):
         raise HTTPException(status_code=502, detail=detail)
 
     response_text = results[0] if results else ""
-    tts_config = results[1] if len(results) > 1 else TTSConfig()
-    log.info("LLM 响应长度: %d 字符, TTS 配置: emotion=%s speed=%.2f",
-             len(response_text), tts_config.emotion, tts_config.speed)
+    instruct_text = results[1] if len(results) > 1 else "用平静自然的语气说话。"
+    log.info("LLM 响应长度: %d 字符, instruct_text=%s",
+             len(response_text), instruct_text)
 
     return {
         "response_text": response_text,
-        "emotion": tts_config.emotion,
-        "speed": tts_config.speed,
+        "instruct_text": instruct_text,
         "has_voice": tts.has_reference,
     }
 
@@ -195,19 +193,18 @@ async def chat_voice(audio: UploadFile = File(...)):
 async def chat_audio(body: dict):
     """
     根据文字生成 TTS 音频流（独立请求，不影响文字回复速度）。
-    body: {text, emotion, speed}
+    body: {text, instruct_text}
     """
     text = body.get("text", "")
-    emotion = body.get("emotion", "neutral")
-    speed = body.get("speed", 1.0)
+    instruct_text = body.get("instruct_text", "用平静自然的语气说话。")
 
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
 
-    log.info("收到音频合成请求, 文本长度=%d, emotion=%s, speed=%.2f", len(text), emotion, speed)
+    log.info("收到音频合成请求, 文本长度=%d, instruct=%s", len(text), instruct_text)
 
     tts = _get_tts()
-    tts_config = TTSConfig(emotion=emotion, speed=speed)
+    tts_config = TTSConfig(instruct_text=instruct_text)
 
     async def audio_stream():
         try:

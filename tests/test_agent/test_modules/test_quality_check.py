@@ -58,11 +58,28 @@ class TestQualityCheckModule:
         assert not ctx.need_regenerate
 
     @pytest.mark.asyncio
-    async def test_all_forbidden_words_covered(self):
+    async def test_all_forbidden_reply_words_covered(self):
         ctx = PipelineContext(user_message="test")
         ctx.llm_messages = [{"role": "system", "content": "..."}]
-        for word in QualityCheckModule._FORBIDDEN:
+        for word in QualityCheckModule._FORBIDDEN_REPLY:
             ctx.need_regenerate = False
             ctx.response = f"xxx{word}yyy"
             ctx = await self._module.process(ctx)
             assert ctx.need_regenerate, f"Should detect: {word}"
+
+    @pytest.mark.asyncio
+    async def test_detect_extreme_instruct_text(self):
+        ctx = PipelineContext(user_message="你好")
+        ctx.response = "乖孩子，奶奶在呢。"
+        ctx.instruct_text = "用怒吼咆哮的语气说话。"
+        ctx.llm_messages = [{"role": "system", "content": "..."}]
+        ctx = await self._module.process(ctx)
+        assert ctx.need_regenerate is True
+
+    @pytest.mark.asyncio
+    async def test_pass_clean_instruct_text(self):
+        ctx = PipelineContext(user_message="你好")
+        ctx.response = "乖孩子，奶奶在呢。"
+        ctx.instruct_text = "用温暖慈祥的语气说话。"
+        ctx = await self._module.process(ctx)
+        assert not ctx.need_regenerate

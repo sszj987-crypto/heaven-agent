@@ -100,7 +100,7 @@ export async function updateDimension(dimension: string, content: string) {
 export interface ChatResponse {
   responseText: string;
   hasVoice: boolean;
-  ttsParams: { text: string; emotion: string; speed: number };
+  audioParams: { text: string; instructText: string };
 }
 
 export async function sendTextMessage(message: string): Promise<ChatResponse> {
@@ -117,7 +117,7 @@ export async function sendTextMessage(message: string): Promise<ChatResponse> {
   return {
     responseText: data.response_text,
     hasVoice: data.has_voice,
-    ttsParams: { text: data.response_text, emotion: data.emotion, speed: data.speed },
+    audioParams: { text: data.response_text, instructText: data.instruct_text },
   };
 }
 
@@ -136,7 +136,7 @@ export async function sendVoiceMessage(audioBlob: Blob): Promise<ChatResponse> {
   return {
     responseText: data.response_text,
     hasVoice: data.has_voice,
-    ttsParams: { text: data.response_text, emotion: data.emotion, speed: data.speed },
+    audioParams: { text: data.response_text, instructText: data.instruct_text },
   };
 }
 
@@ -157,11 +157,11 @@ export async function deleteHistory(): Promise<void> {
   if (!res.ok) throw new Error(`删除会话失败 (${res.status})`);
 }
 
-export async function fetchAudio(ttsParams: { text: string; emotion: string; speed: number }): Promise<Blob> {
+export async function fetchAudio(audioParams: { text: string; instructText: string }): Promise<Blob> {
   const res = await fetch(`${BASE}/chat/audio`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(ttsParams),
+    body: JSON.stringify({ text: audioParams.text, instruct_text: audioParams.instructText }),
   });
   if (!res.ok) throw new Error(`音频合成失败 (${res.status})`);
   return res.blob();

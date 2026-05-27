@@ -11,11 +11,8 @@ class EmotionTag:
 
 @dataclass
 class TTSConfig:
-    """TTS 精细控制参数"""
-    emotion: str = "neutral"   # gentle / happy / sad / calm / neutral
-    speed: float = 1.0         # 0.5-2.0
-    pitch: int = 0             # -12 到 +12
-    pause_ms: int = 300        # 句间停顿 (ms)
+    """TTS 语音合成参数"""
+    instruct_text: str = "用平静自然的语气说话。"
 
 
 @dataclass
@@ -34,7 +31,5 @@ class PipelineContext:
 
     # LLM 产出
     response: str = ""
+    instruct_text: str = ""
     need_regenerate: bool = False
-
-    # Postprocess 产出
-    tts_config: TTSConfig | None = None

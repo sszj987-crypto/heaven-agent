@@ -16,16 +16,8 @@ log = get_logger("tts")
 SAMPLE_RATE = 24_000
 REFERENCE_AUDIO_FILE = "reference_audio.wav"
 
-# Emotion → natural language prompt for CosyVoice3 instruct mode
-EMOTION_PROMPTS: dict[str, str] = {
-    "neutral": "用平静自然的语气说话。",
-    "happy": "用开心愉悦的语气说话。",
-    "sad": "用温柔安慰的语气说话。",
-    "gentle": "用温柔慈祥的语气说话。",
-    "warm": "用温暖亲切的语气说话。",
-    "calm": "用平和安定的语气说话。",
-    "concerned": "用关切担心的语气说话。",
-}
+# 默认语音语气（LLM 未产出 instruct_text 时使用）
+DEFAULT_INSTRUCT = "用平静自然的语气说话。"
 
 
 class TTSService:
@@ -47,9 +39,15 @@ class TTSService:
         from mlx_audio.tts.models.cosyvoice3 import Model, ModelConfig
 
         log.info("正在加载 CosyVoice3 模型（MLX 8-bit, 约 1.3GB）...")
+        # S3TokenizerV3 有本地缓存则跳过联网检查，避免因网络问题导致加载失败
+        import os
+        from pathlib import Path as _Path
+        _cache = _Path.home() / ".cache/huggingface/hub/models--mlx-community--S3TokenizerV3"
+        if _cache.exists():
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            log.debug("S3TokenizerV3 缓存已存在，使用离线模式加载")
         config = ModelConfig(model_path=self._model_path)
         model = Model(config)
-        # Pre-load all components (model weights, tokenizers, speaker encoder)
         model._ensure_model_loaded()
         model._ensure_tokenizers_loaded()
         log.info("CosyVoice3 模型加载完成 (MLX 8-bit, Apple Silicon 原生)")
@@ -100,12 +98,12 @@ class TTSService:
             yield b""
             return
 
-        log.info("TTS 合成开始, 文本长度=%d, emotion=%s", len(text), cfg.emotion)
+        log.info("TTS 合成开始, 文本内容=%s, 文本长度=%d, instruct=%s", text, len(text), cfg.instruct_text)
         try:
             audio_array = await asyncio.to_thread(
                 self._generate,
                 text=text,
-                emotion=cfg.emotion,
+                instruct_text=cfg.instruct_text,
             )
             log.debug("TTS 生成完成, 音频长度=%d samples", audio_array.shape[0])
         except Exception as e:
@@ -113,11 +111,10 @@ class TTSService:
             yield b""
             return
 
-        # Convert numpy array to 16-bit WAV bytes
         buf = io.BytesIO()
         with wav_mod.open(buf, "wb") as wf:
             wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit
+            wf.setsampwidth(2)
             wf.setframerate(SAMPLE_RATE)
             wf.writeframes((audio_array * 32767).astype(np.int16).tobytes())
         buf.seek(0)
@@ -125,7 +122,7 @@ class TTSService:
         log.info("TTS 合成完成, WAV 大小=%d bytes", len(audio_bytes))
         yield audio_bytes
 
-    def _generate(self, text: str, emotion: str = "neutral") -> np.ndarray:
+    def _generate(self, text: str, instruct_text: str = DEFAULT_INSTRUCT) -> np.ndarray:
         """同步生成音频（在 asyncio.to_thread 中运行）"""
         model = self._load_model()
 
@@ -140,27 +137,25 @@ class TTSService:
             ref_audio_np = resample(ref_audio_np, num_samples)
         ref_audio_mx = mx.array(ref_audio_np, dtype=mx.float32)
 
-        # Build instruct text for emotion control
-        emotion_prompt = EMOTION_PROMPTS.get(emotion, EMOTION_PROMPTS["neutral"])
-        instruct_text = f"You are a helpful assistant.{emotion_prompt}<|endofprompt|>"
-        log.debug("TTS instruct: %s", instruct_text)
+        # CosyVoice3 训练格式: "You are a helpful assistant.{指令}<|endofprompt|>{文本}"
+        # "You are a helpful assistant." 是区分指令和文本的关键标记，不可省略
+        # <|endofprompt|> 由 model.generate() 自动追加
+        full_instruct = f"You are a helpful assistant.{instruct_text}"
+        log.debug("TTS instruct: %s", full_instruct)
 
-        # Generate audio using CosyVoice3 instruct mode
         results = list(model.generate(
             text=text,
             ref_audio=ref_audio_mx,
-            instruct_text=instruct_text,
-            stt_model=None,  # Instruct mode doesn't need auto-transcription
+            instruct_text=full_instruct,
+            stt_model=None,
             verbose=False,
         ))
 
         if not results:
             return np.array([], dtype=np.float32)
 
-        # Use the last result (contains the final audio)
         audio = np.array(results[-1].audio).squeeze()
 
-        # Normalize to [-1, 1]
         peak = np.max(np.abs(audio))
         if peak > 0:
             audio = audio / peak

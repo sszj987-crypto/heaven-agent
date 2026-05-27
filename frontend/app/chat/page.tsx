@@ -34,7 +34,7 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      const { responseText, hasVoice, ttsParams } = await sendTextMessage(text);
+      const { responseText, hasVoice, audioParams } = await sendTextMessage(text);
       // 立即显示文字回复
       setMessages((prev) => [...prev, { role: "assistant", content: responseText }]);
       setLoading(false);
@@ -45,7 +45,7 @@ export default function ChatPage() {
           i === respIndex ? { ...m, audioLoading: true } : m
         ));
         try {
-          const audioBlob = await fetchAudio(ttsParams);
+          const audioBlob = await fetchAudio(audioParams);
           const url = URL.createObjectURL(audioBlob);
           setMessages((prev) => prev.map((m, i) =>
             i === respIndex ? { ...m, audioUrl: url, audioLoading: false } : m
@@ -91,7 +91,7 @@ export default function ChatPage() {
         setLoading(true);
         const msgIndex = messages.length;
         try {
-          const { responseText, hasVoice, ttsParams } = await sendVoiceMessage(audioBlob);
+          const { responseText, hasVoice, audioParams } = await sendVoiceMessage(audioBlob);
           setMessages((prev) => [
             ...prev,
             { role: "user", content: "[语音消息]" },
@@ -105,7 +105,7 @@ export default function ChatPage() {
               i === respIndex ? { ...m, audioLoading: true } : m
             ));
             try {
-              const respBlob = await fetchAudio(ttsParams);
+              const respBlob = await fetchAudio(audioParams);
               const url = URL.createObjectURL(respBlob);
               setMessages((prev) => prev.map((m, i) =>
                 i === respIndex ? { ...m, audioUrl: url, audioLoading: false } : m

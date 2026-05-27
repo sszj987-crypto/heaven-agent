@@ -20,9 +20,8 @@ class TestPipeline:
         import src.agent.modules.postllm  # 触发注册
         pipeline = Pipeline()
         names = {m.__class__.__name__ for m in pipeline._postllm}
-        assert len(names) >= 2
+        assert len(names) >= 1
         assert "QualityCheckModule" in names
-        assert "EmotionInjectModule" in names
 
     def test_collect_postoutput_modules(self):
         """postoutput slot 应包含模块"""
