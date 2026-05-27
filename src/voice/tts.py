@@ -1,5 +1,6 @@
 import asyncio
 import io
+import time
 import wave as wav_mod
 from pathlib import Path
 from typing import AsyncGenerator
@@ -98,14 +99,15 @@ class TTSService:
             yield b""
             return
 
-        log.info("TTS 合成开始, 文本内容=%s, 文本长度=%d, instruct=%s", text, len(text), cfg.instruct_text)
+        log.info("TTS 合成开始, text_len=%d, instruct=%s", len(text), cfg.instruct_text)
+        t0 = time.monotonic()
         try:
             audio_array = await asyncio.to_thread(
                 self._generate,
                 text=text,
                 instruct_text=cfg.instruct_text,
             )
-            log.debug("TTS 生成完成, 音频长度=%d samples", audio_array.shape[0])
+            log.debug("TTS 生成完成, audio_shape=%s, dtype=%s", audio_array.shape, audio_array.dtype)
         except Exception as e:
             log.error("TTS 生成失败: %s", e, exc_info=True)
             yield b""
@@ -119,11 +121,15 @@ class TTSService:
             wf.writeframes((audio_array * 32767).astype(np.int16).tobytes())
         buf.seek(0)
         audio_bytes = buf.read()
-        log.info("TTS 合成完成, WAV 大小=%d bytes", len(audio_bytes))
+        elapsed = time.monotonic() - t0
+        duration_s = audio_array.shape[0] / SAMPLE_RATE
+        log.info("TTS 合成完成, WAV_size=%d bytes, duration=%.1fs, elapsed=%.1fs, rtf=%.2f",
+                 len(audio_bytes), duration_s, elapsed, elapsed / duration_s if duration_s > 0 else 0)
         yield audio_bytes
 
     def _generate(self, text: str, instruct_text: str = DEFAULT_INSTRUCT) -> np.ndarray:
         """同步生成音频（在 asyncio.to_thread 中运行）"""
+        t0 = time.monotonic()
         model = self._load_model()
 
         # Load reference audio → mx.array at 24kHz
@@ -136,6 +142,7 @@ class TTSService:
             num_samples = int(duration * SAMPLE_RATE)
             ref_audio_np = resample(ref_audio_np, num_samples)
         ref_audio_mx = mx.array(ref_audio_np, dtype=mx.float32)
+        log.debug("参考音频加载完成, ref_shape=%s, sr=%d", ref_audio_mx.shape, SAMPLE_RATE)
 
         # CosyVoice3 训练格式: "You are a helpful assistant.{指令}<|endofprompt|>{文本}"
         # "You are a helpful assistant." 是区分指令和文本的关键标记，不可省略
@@ -143,6 +150,7 @@ class TTSService:
         full_instruct = f"You are a helpful assistant.{instruct_text}"
         log.debug("TTS instruct: %s", full_instruct)
 
+        t_gen = time.monotonic()
         results = list(model.generate(
             text=text,
             ref_audio=ref_audio_mx,
@@ -150,8 +158,10 @@ class TTSService:
             stt_model=None,
             verbose=False,
         ))
+        log.debug("model.generate 耗时=%.2fs, chunks=%d", time.monotonic() - t_gen, len(results))
 
         if not results:
+            log.warning("TTS model.generate 返回空结果")
             return np.array([], dtype=np.float32)
 
         audio = np.array(results[-1].audio).squeeze()
@@ -160,6 +170,8 @@ class TTSService:
         if peak > 0:
             audio = audio / peak
 
+        log.debug("_generate 总耗时=%.2fs, audio_shape=%s, peak=%.3f",
+                  time.monotonic() - t0, audio.shape, peak)
         return audio.astype(np.float32)
 
 

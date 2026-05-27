@@ -54,8 +54,11 @@ def _get_tts() -> TTSService:
 @router.get("/chat/history")
 async def get_chat_history():
     """返回对话历史（供前端恢复会话）"""
+    log.info("获取对话历史")
     loop = _get_agent_loop()
-    return {"messages": loop.messages}
+    history = loop.messages
+    log.info("对话历史返回, messages=%d", len(history))
+    return {"messages": history}
 
 
 @router.delete("/chat/history")
@@ -119,6 +122,7 @@ async def chat_text(body: dict):
     instruct_text = results[1] if len(results) > 1 else "用平静自然的语气说话。"
     log.info("LLM 响应长度: %d 字符, instruct_text=%s",
              len(response_text), instruct_text)
+    log.debug("最终响应文本:\n%s", response_text)
 
     return {
         "response_text": response_text,
@@ -181,6 +185,7 @@ async def chat_voice(audio: UploadFile = File(...)):
     instruct_text = results[1] if len(results) > 1 else "用平静自然的语气说话。"
     log.info("LLM 响应长度: %d 字符, instruct_text=%s",
              len(response_text), instruct_text)
+    log.debug("最终响应文本:\n%s", response_text)
 
     return {
         "response_text": response_text,
@@ -223,6 +228,7 @@ async def chat_audio(body: dict):
 @router.get("/soul")
 async def get_soul():
     profile = _soul_loader.load()
+    log.info("获取 Soul 配置, name=%s, dimensions=%d", profile.name, len(profile.dimensions))
     return {"dimensions": profile.dimensions}
 
 
@@ -257,6 +263,7 @@ async def get_circumstances():
     """返回当前场景内容（可编辑文本）和可选场景列表"""
     current = Settings.get().circumstances
     scene_key = _get_current_scene_key()
+    log.info("获取场景信息, scene=%s, len=%d", scene_key, len(current))
     return {
         "content": current,
         "scene": scene_key,
@@ -274,9 +281,11 @@ async def update_circumstances(body: dict):
     if not content:
         raise HTTPException(status_code=400, detail="场景内容不能为空")
 
+    log.info("更新场景, 新内容长度=%d", len(content))
     settings = Settings.get()
     settings.update_circumstances(content)
     _get_agent_loop().update_circumstances(content)
+    log.info("场景更新完成")
     return {"status": "ok"}
 
 
@@ -291,15 +300,19 @@ def _get_current_scene_key() -> str:
 
 @router.get("/soul/{dimension}")
 async def get_dimension(dimension: str):
+    log.info("获取 Soul 维度, dimension=%s", dimension)
     content = _soul_loader.load_dimension(dimension)
+    log.info("Soul 维度返回, dimension=%s, len=%d", dimension, len(content))
     return {"dimension": dimension, "content": content}
 
 
 @router.put("/soul/{dimension}")
 async def update_dimension(dimension: str, body: dict):
     content = body.get("content", "")
+    log.info("更新 Soul 维度, dimension=%s, 新内容长度=%d", dimension, len(content))
     _soul_loader.save_dimension(dimension, content)
     _get_agent_loop().invalidate_soul_cache()
+    log.info("Soul 维度更新完成, dimension=%s", dimension)
     return {"status": "ok"}
 
 
@@ -308,6 +321,7 @@ async def update_dimension(dimension: str, body: dict):
 @router.get("/settings")
 async def get_settings():
     settings = Settings.get()
+    log.info("获取设置, log_level=%s, llm_configured=%s", settings.log_level, bool(settings.llm.api_key))
     return {
         "llm": {
             "base_url": settings.llm.base_url,
@@ -320,15 +334,18 @@ async def get_settings():
 
 @router.put("/settings")
 async def update_settings(body: dict):
+    log.info("更新设置, keys=%s", list(body.keys()))
     settings = Settings.get()
     if "llm" in body:
         settings.update_llm(**body["llm"])
+        log.info("LLM 设置已更新")
     if "log_level" in body:
         level = body["log_level"]
         if level not in ("debug", "error"):
             raise HTTPException(status_code=400, detail="log_level 必须为 'debug' 或 'error'")
         log.info("日志等级切换: %s → %s", settings.log_level, level)
         settings.update_log_level(level)
+    log.info("设置更新完成")
     return {"status": "ok"}
 
 
@@ -356,14 +373,14 @@ async def upload_voice_sample(audio: UploadFile = File(...)):
 async def get_voice_status():
     """返回声音档案状态"""
     has_ref = _get_tts().has_reference
-    log.debug("声音档案状态: has_reference=%s", has_ref)
+    log.info("获取声音档案状态, has_reference=%s", has_ref)
     return {"has_reference": has_ref}
 
 
 @router.post("/settings/test-llm")
 async def test_llm_connection():
     settings = Settings.get()
-    log.info("测试 LLM 连接...")
+    log.info("测试 LLM 连接, base_url=%s, model=%s", settings.llm.base_url, settings.llm.model)
     ok = await LLMManager.test_connection(settings.llm)
     log.info("LLM 连接测试结果: %s", "成功" if ok else "失败")
     return {"connected": ok}

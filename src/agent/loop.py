@@ -1,4 +1,5 @@
 import re
+import time
 from pathlib import Path
 from typing import AsyncGenerator
 from .pipeline import Pipeline
@@ -69,14 +70,14 @@ class AgentLoop:
         统一对话入口。
         返回: (reply_text, instruct_text)
         """
-        log.info("AgentLoop.run 开始, user_message=%s...", user_message[:50])
+        t_start = time.monotonic()
+        log.info("══════ AgentLoop.run 开始, user_message=%s ══════", user_message[:60])
         ctx = PipelineContext(user_message=user_message)
 
         # ── PreLLM ──
-        log.debug("执行 PreLLM 阶段...")
+        t_prellm = time.monotonic()
         ctx = await self._pipeline.run_prellm(ctx)
-        log.debug("PreLLM 完成, messages 数量=%d, emotion=%s",
-                  len(ctx.llm_messages), ctx.emotion.type if ctx.emotion else "None")
+        log.debug("PreLLM 耗时=%.2fs", time.monotonic() - t_prellm)
 
         # ── LLM（可能触发重生成）──
         for attempt in range(self._MAX_REGENERATE + 1):
@@ -85,37 +86,40 @@ class AgentLoop:
             ctx.need_regenerate = False
             ctx.response = ""
             ctx.instruct_text = ""
-            log.debug("调用 LLM streaming, model=%s", self._llm.model)
+            t_llm = time.monotonic()
             async for chunk in self._llm.stream(ctx.llm_messages):
                 ctx.response += chunk
-            log.debug("LLM 响应完成, 长度=%d 字符", len(ctx.response))
+            log.debug("LLM 流式耗时=%.2fs", time.monotonic() - t_llm)
+            log.debug("LLM 原始响应全文 (%d chars):\n%s", len(ctx.response), ctx.response)
 
             # 解析 LLM 响应：分离回复文本和语音语气
             reply, instruct = _parse_llm_response(ctx.response)
             ctx.response = reply
             ctx.instruct_text = instruct
-            log.debug("解析 LLM 响应, 回复长度=%d, 语音语气=%s", len(reply), instruct)
+            log.debug("解析后 reply (%d chars): %s", len(reply), reply[:300])
+            log.debug("解析后 instruct: %s", instruct)
 
             ctx = await self._pipeline.run_postllm(ctx)
 
             if not ctx.need_regenerate:
                 break
-            log.debug("LLM 响应触发重生成规则")
 
         # ── 记录对话历史 ──
         self._messages.add("user", user_message)
         self._messages.add("assistant", ctx.response)
-        log.debug("对话历史更新, 轮数=%d, 总字符=%d",
-                  self._messages.conversation_turns, self._messages.conversation_chars)
+        log.debug("对话历史更新, 轮数=%d, 总消息=%d, 对话字符=%d",
+                  self._messages.conversation_turns, len(self._messages.get_all()),
+                  self._messages.conversation_chars)
 
         if self._history_path:
             self._messages.save_to_file(self._history_path)
-            log.debug("对话历史已保存到 %s", self._history_path)
 
         # ── PostOutput ──
-        log.debug("执行 PostOutput 阶段...")
         ctx = await self._pipeline.run_postoutput(ctx)
-        log.debug("PostOutput 完成")
+
+        total_elapsed = time.monotonic() - t_start
+        log.info("══════ AgentLoop.run 完成, 总耗时=%.2fs, reply_len=%d, instruct=%s, turns=%d ══════",
+                 total_elapsed, len(ctx.response), ctx.instruct_text, self._messages.conversation_turns)
 
         yield ctx.response
         yield ctx.instruct_text

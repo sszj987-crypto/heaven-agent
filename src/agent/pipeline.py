@@ -33,19 +33,27 @@ class Pipeline:
         return [mod_cls() for _, mod_cls in items]
 
     async def run_prellm(self, ctx: PipelineContext) -> PipelineContext:
+        log.info("── PreLLM 阶段开始（%d 个模块）──", len(self._prellm))
         for module in self._prellm:
             log.debug("PreLLM: 执行 %s", module.__class__.__name__)
             ctx = await module.process(ctx)
+        log.info("── PreLLM 阶段完成, messages=%d, emotion=%s ──",
+                 len(ctx.llm_messages), ctx.emotion.type if ctx.emotion else "None")
         return ctx
 
     async def run_postllm(self, ctx: PipelineContext) -> PipelineContext:
+        log.info("── PostLLM 阶段开始（%d 个模块）──", len(self._postllm))
         for module in self._postllm:
             log.debug("PostLLM: 执行 %s", module.__class__.__name__)
             ctx = await module.process(ctx)
+        log.info("── PostLLM 阶段完成, response_len=%d, need_regenerate=%s ──",
+                 len(ctx.response), ctx.need_regenerate)
         return ctx
 
     async def run_postoutput(self, ctx: PipelineContext) -> PipelineContext:
+        log.info("── PostOutput 阶段开始（%d 个模块）──", len(self._postoutput))
         for module in self._postoutput:
             log.debug("PostOutput: 执行 %s", module.__class__.__name__)
             ctx = await module.process(ctx)
+        log.info("── PostOutput 阶段完成 ──")
         return ctx

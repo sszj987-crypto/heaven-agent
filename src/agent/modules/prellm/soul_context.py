@@ -31,6 +31,7 @@ class SoulContextModule(PipelineModule):
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         circumstances = ctx.circumstances or ""
+        log.info("Soul Context 构建开始, circumstances=%s", circumstances[:60] if circumstances else "无")
 
         # 构建 System Prompt（带缓存）
         if SoulContextModule._cached_prompt is not None:
@@ -41,16 +42,26 @@ class SoulContextModule(PipelineModule):
             ctx.soul_profile = profile
             ctx.system_prompt = self._prompt_builder.build(profile, circumstances)
             SoulContextModule._cached_prompt = ctx.system_prompt
-            log.debug("构建新 System Prompt, 长度=%d, dimensions=%d",
-                      len(ctx.system_prompt), len(profile.dimensions))
+            log.info("构建新 System Prompt, soul=%s, 长度=%d chars, dimensions=%d",
+                     profile.name, len(ctx.system_prompt), len(profile.dimensions))
+            log.debug("System Prompt 维度列表: %s", list(profile.dimensions.keys()))
 
         # 组装 messages: system + 历史消息 + 当前消息
         history = self._messages.get_all()
         ctx.llm_messages = [{"role": "system", "content": ctx.system_prompt}]
         ctx.llm_messages.extend(history)
         ctx.llm_messages.append({"role": "user", "content": ctx.user_message})
-        log.debug("组装 LLM messages, system=%d chars, history=%d, total=%d",
-                  len(ctx.system_prompt), len(history), len(ctx.llm_messages))
+        log.info("Soul Context 构建完成, system=%d chars, history=%d msgs, current_msg=%d chars, total_msgs=%d",
+                 len(ctx.system_prompt), len(history), len(ctx.user_message), len(ctx.llm_messages))
+        # DEBUG: 完整打印 LLM 输入 messages（不截断）
+        if log.isEnabledFor(10):
+            log.debug("── LLM 输入 messages 全文开始（total=%d msgs）──", len(ctx.llm_messages))
+            for i, msg in enumerate(ctx.llm_messages):
+                log.debug("[%d/%d] role=%s, len=%d\n%s",
+                         i + 1, len(ctx.llm_messages), msg["role"], len(msg["content"]), msg["content"])
+            total_chars = sum(len(m["content"]) for m in ctx.llm_messages)
+            log.debug("── LLM 输入 messages 全文结束（total=%d msgs, %d chars）──",
+                     len(ctx.llm_messages), total_chars)
         return ctx
 
     @classmethod

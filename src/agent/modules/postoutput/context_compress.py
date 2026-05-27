@@ -41,12 +41,14 @@ class ContextCompressModule(PipelineModule):
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         turns = self._messages.conversation_turns
         chars = self._messages.conversation_chars
+        log.info("上下文压缩检查, turns=%d/%d, chars=%d/%d",
+                 turns, self._max_turns, chars, self._max_chars)
 
         if turns <= self._max_turns and chars <= self._max_chars:
-            log.debug("无需压缩, turns=%d/%d, chars=%d/%d", turns, self._max_turns, chars, self._max_chars)
+            log.debug("无需压缩, 未达阈值")
             return ctx  # 未超阈值，不压缩
 
-        log.info("触发上下文压缩, turns=%d, chars=%d", turns, chars)
+        log.info("触发上下文压缩, turns=%d, chars=%d, 总消息=%d", turns, chars, len(self._messages.get_all()))
         # 异步触发摘要（不阻塞当前回复）
         import asyncio
         asyncio.create_task(self._compress())

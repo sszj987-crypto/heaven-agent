@@ -1,6 +1,9 @@
 from ..base import PipelineModule
 from ...context import PipelineContext, EmotionTag
 from ...pipeline import Pipeline
+from ....config.logger import get_logger
+
+log = get_logger("emotion_detect")
 
 
 @Pipeline.register(slot="prellm", order=2)
@@ -38,14 +41,18 @@ class EmotionDetectModule(PipelineModule):
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         text = ctx.user_message
+        log.info("情绪检测开始, text=%s", text[:80])
+
         scored: dict[str, float] = {}
 
         for emotion, rule in self._RULES.items():
             score = sum(rule["weight"] for kw in rule["keywords"] if kw in text)
             if score > 0:
                 scored[emotion] = score
+                log.debug("情绪关键词匹配, emotion=%s, score=%.2f", emotion, score)
 
         if not scored:
+            log.info("情绪检测完成, 未匹配到情绪, type=neutral")
             ctx.emotion = EmotionTag(type="neutral", intensity=0.3, is_high_intensity=False)
             return ctx
 
@@ -53,12 +60,16 @@ class EmotionDetectModule(PipelineModule):
         intensity = min(0.4 + scored[top] * 0.15, 1.0)
         if any(amp in text for amp in self._INTENSITY_AMPLIFIERS):
             intensity = min(intensity + 0.2, 1.0)
+            log.debug("检测到强度放大器, intensity+=0.2")
         if len(text) <= 6:
             intensity = min(intensity, 0.4)
+            log.debug("短文本, intensity capped at 0.4")
 
         ctx.emotion = EmotionTag(
             type=top,
             intensity=round(intensity, 2),
             is_high_intensity=intensity >= 0.75,
         )
+        log.info("情绪检测完成, type=%s, intensity=%.2f, high=%s",
+                 ctx.emotion.type, ctx.emotion.intensity, ctx.emotion.is_high_intensity)
         return ctx

@@ -24,6 +24,8 @@ class QualityCheckModule(PipelineModule):
     ]
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
+        log.info("质量检查开始, reply_len=%d, instruct=%s", len(ctx.response), ctx.instruct_text)
+
         if not ctx.response:
             log.debug("响应为空，跳过质量检查")
             return ctx
@@ -59,5 +61,5 @@ class QualityCheckModule(PipelineModule):
                 ctx.need_regenerate = True
                 return ctx
 
-        log.debug("质量检查通过（回复文本+语音语气）")
+        log.info("质量检查通过, reply_len=%d, instruct=%s", len(ctx.response), ctx.instruct_text)
         return ctx
