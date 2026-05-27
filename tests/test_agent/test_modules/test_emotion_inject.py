@@ -1,11 +1,5 @@
 import pytest
-from unittest.mock import patch
 from src.agent.context import PipelineContext, EmotionTag
-from src.config.loader import VoiceConfig
-
-
-class _FakeVoiceSettings:
-    voice = VoiceConfig(speaker="test_speaker")
 
 
 class TestEmotionInjectModule:
@@ -14,9 +8,7 @@ class TestEmotionInjectModule:
         self._module = EmotionInjectModule()
 
     @pytest.mark.asyncio
-    @patch("src.agent.modules.postllm.emotion_inject.Settings")
-    async def test_grief_params(self, MockSettings):
-        MockSettings.get.return_value = _FakeVoiceSettings()
+    async def test_grief_params(self):
         ctx = PipelineContext(user_message="")
         ctx.emotion = EmotionTag(type="grief")
         ctx = await self._module.process(ctx)
@@ -24,12 +16,9 @@ class TestEmotionInjectModule:
         assert ctx.tts_config.speed == 0.85
         assert ctx.tts_config.pitch == -2
         assert ctx.tts_config.pause_ms == 500
-        assert ctx.tts_config.speaker == "test_speaker"
 
     @pytest.mark.asyncio
-    @patch("src.agent.modules.postllm.emotion_inject.Settings")
-    async def test_joy_params(self, MockSettings):
-        MockSettings.get.return_value = _FakeVoiceSettings()
+    async def test_joy_params(self):
         ctx = PipelineContext(user_message="")
         ctx.emotion = EmotionTag(type="joy")
         ctx = await self._module.process(ctx)
@@ -38,9 +27,7 @@ class TestEmotionInjectModule:
         assert ctx.tts_config.pitch == 3
 
     @pytest.mark.asyncio
-    @patch("src.agent.modules.postllm.emotion_inject.Settings")
-    async def test_neutral_params(self, MockSettings):
-        MockSettings.get.return_value = _FakeVoiceSettings()
+    async def test_neutral_params(self):
         ctx = PipelineContext(user_message="")
         ctx.emotion = EmotionTag(type="neutral")
         ctx = await self._module.process(ctx)
@@ -48,18 +35,14 @@ class TestEmotionInjectModule:
         assert ctx.tts_config.speed == 1.00
 
     @pytest.mark.asyncio
-    @patch("src.agent.modules.postllm.emotion_inject.Settings")
-    async def test_no_emotion_defaults_to_neutral(self, MockSettings):
-        MockSettings.get.return_value = _FakeVoiceSettings()
+    async def test_no_emotion_defaults_to_neutral(self):
         ctx = PipelineContext(user_message="")
         ctx.emotion = None
         ctx = await self._module.process(ctx)
         assert ctx.tts_config.emotion == "neutral"
 
     @pytest.mark.asyncio
-    @patch("src.agent.modules.postllm.emotion_inject.Settings")
-    async def test_unknown_emotion_defaults_to_neutral(self, MockSettings):
-        MockSettings.get.return_value = _FakeVoiceSettings()
+    async def test_unknown_emotion_defaults_to_neutral(self):
         ctx = PipelineContext(user_message="")
         ctx.emotion = EmotionTag(type="surprise")
         ctx = await self._module.process(ctx)

@@ -21,7 +21,7 @@ class TestContextCompressModule:
         self._mock_llm = AsyncMock()
         self._mock_llm.chat.return_value = "对话摘要内容"
 
-        self._module._set_deps(self._mock_llm, self._mock_messages)
+        self._module.set_deps(self._mock_llm, self._mock_messages)
 
     @pytest.mark.asyncio
     async def test_no_compress_when_under_threshold(self):

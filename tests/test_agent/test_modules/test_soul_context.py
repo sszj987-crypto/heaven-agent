@@ -23,7 +23,7 @@ class TestSoulContextModule:
             {"role": "assistant", "content": "之前的回答"},
         ]
 
-        self._module._set_deps(self._mock_loader, self._mock_messages)
+        self._module.set_deps(self._mock_loader, self._mock_messages)
 
     @pytest.mark.asyncio
     async def test_builds_system_prompt_and_messages(self):

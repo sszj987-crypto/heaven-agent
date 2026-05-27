@@ -18,9 +18,6 @@ class TestSettings:
             "api_key": "sk-test123",
             "model": "gpt-4o",
         }))
-        (self._config_dir / "voice.json").write_text(json.dumps({
-            "fish_speech_url": "http://localhost:8080",
-        }))
         (self._config_dir / "app.json").write_text(json.dumps({
             "soul_path": "config/souls/demo",
         }))
@@ -54,11 +51,6 @@ class TestSettings:
         assert llm.base_url == "https://api.test.com/v1"
         assert llm.model == "gpt-4o"
 
-    def test_voice_property(self):
-        Settings.init(self._config_dir)
-        voice = Settings.get().voice
-        assert voice.fish_speech_url == "http://localhost:8080"
-
     def test_soul_path(self):
         Settings.init(self._config_dir)
         assert Settings.get().soul_path.name == "demo"
@@ -85,10 +77,9 @@ class TestSettings:
         assert saved["api_key"] == "new-key"
         assert saved["model"] == "gpt-4o-mini"
 
-    def test_update_voice_writes_back(self):
+    def test_update_circumstances_writes_back(self):
         Settings.init(self._config_dir)
-        Settings.get().update_voice(fish_speech_url="http://new-url:8080")
-
-        assert Settings.get().voice.fish_speech_url == "http://new-url:8080"
-        saved = json.loads((self._config_dir / "voice.json").read_text())
-        assert saved["fish_speech_url"] == "http://new-url:8080"
+        Settings.get().update_circumstances("新场景")
+        assert Settings.get().circumstances == "新场景"
+        saved = (self._config_dir / "circumstances.md").read_text()
+        assert saved == "新场景"

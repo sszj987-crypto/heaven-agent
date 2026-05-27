@@ -18,7 +18,7 @@ class TestMemoryPersistModule:
 
         # Mock message_manager
         self._mock_messages = MagicMock()
-        self._module._set_deps(self._mock_messages)
+        self._module.set_deps(self._mock_messages)
 
     def teardown_method(self):
         self._tmp.cleanup()
