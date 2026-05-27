@@ -13,7 +13,9 @@ class Settings:
         self._loader = ConfigLoader(self._config_dir)
         self._config: AppConfig = self._loader.load()
         self._circumstances: str = ""
+        self._log_level: str = "error"
         self._load_circumstances()
+        self._load_log_level()
 
     @classmethod
     def init(cls, config_dir: Path) -> "Settings":
@@ -33,16 +35,35 @@ class Settings:
         return self._config.llm
 
     @property
-    def voice(self):
-        return self._config.voice
-
-    @property
     def soul_path(self) -> Path:
         return self._config_dir.parent / self._config.soul_path
 
     @property
+    def data_dir(self) -> Path:
+        return self._config_dir
+
+    @property
     def circumstances(self) -> str:
         return self._circumstances
+
+    @property
+    def log_level(self) -> str:
+        return self._log_level
+
+    def update_log_level(self, level: str):
+        """更新日志等级并写回 app.json"""
+        self._log_level = level
+        from .logger import set_level
+        set_level(level)
+        self._save_app_json()
+
+    def _load_log_level(self):
+        """从 app.json 加载日志等级"""
+        app_path = self._config_dir / "app.json"
+        if app_path.exists():
+            import json
+            data = json.loads(app_path.read_text())
+            self._log_level = data.get("log_level", "error")
 
     def _load_circumstances(self):
         path = self._config_dir / "circumstances.md"
@@ -56,13 +77,6 @@ class Settings:
                 setattr(self._config.llm, key, value)
         self._save_json("llm.json", self._config.llm)
 
-    def update_voice(self, **kwargs):
-        """更新 Voice 配置并写回 JSON 文件"""
-        for key, value in kwargs.items():
-            if hasattr(self._config.voice, key):
-                setattr(self._config.voice, key, value)
-        self._save_json("voice.json", self._config.voice)
-
     def update_circumstances(self, content: str):
         """更新场景描述并写回 circumstances.md"""
         self._circumstances = content
@@ -73,3 +87,9 @@ class Settings:
         from dataclasses import asdict
         path = self._config_dir / filename
         path.write_text(json.dumps(asdict(dataclass_instance), indent=2, ensure_ascii=False))
+
+    def _save_app_json(self):
+        """保存 app.json 中的运行时设置（soul_path, log_level 等）"""
+        path = self._config_dir / "app.json"
+        data = {"soul_path": self._config.soul_path, "log_level": self._log_level}
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))

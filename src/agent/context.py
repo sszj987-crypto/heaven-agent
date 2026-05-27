@@ -16,7 +16,6 @@ class TTSConfig:
     speed: float = 1.0         # 0.5-2.0
     pitch: int = 0             # -12 到 +12
     pause_ms: int = 300        # 句间停顿 (ms)
-    speaker: str = ""          # 说话人/音色 ID（Fish Speech speaker）
 
 
 @dataclass

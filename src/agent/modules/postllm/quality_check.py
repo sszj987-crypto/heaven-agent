@@ -1,6 +1,9 @@
 from ..base import PipelineModule
 from ...context import PipelineContext
 from ...pipeline import Pipeline
+from ....config.logger import get_logger
+
+log = get_logger("quality_check")
 
 
 @Pipeline.register(slot="postllm", order=1)
@@ -14,10 +17,12 @@ class QualityCheckModule(PipelineModule):
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         if not ctx.response:
+            log.debug("响应为空，跳过快词检查")
             return ctx
 
         for pattern in self._FORBIDDEN:
             if pattern in ctx.response:
+                log.warning("检测到禁忌词: %s, 触发重生成", pattern)
                 # 追加警告消息，让 LLM 换个说法重新生成
                 ctx.llm_messages.append({
                     "role": "system",
@@ -31,4 +36,5 @@ class QualityCheckModule(PipelineModule):
                 ctx.need_regenerate = True
                 return ctx
 
+        log.debug("质量检查通过")
         return ctx

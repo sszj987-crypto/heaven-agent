@@ -1,7 +1,10 @@
 import json
+import base64
+import traceback
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse, Response
 from ..config.settings import Settings
+from ..config.logger import get_logger
 from ..llm.manager import LLMManager
 from ..soul.loader import SoulLoader
 from ..agent.loop import AgentLoop
@@ -10,6 +13,7 @@ from ..voice.asr import ASRService
 from ..voice.tts import TTSService
 
 router = APIRouter()
+log = get_logger("api")
 
 # 全局单例，启动时初始化
 _agent_loop: AgentLoop | None = None
@@ -20,15 +24,18 @@ _soul_loader: SoulLoader | None = None
 def init_services():
     """应用启动时调用，初始化全局服务"""
     global _agent_loop, _tts, _soul_loader
+    log.info("正在初始化服务...")
     settings = Settings.get()
     llm_client = LLMManager.get_client(settings.llm)
     _soul_loader = SoulLoader(settings.soul_path)
-    _tts = TTSService(settings.voice.fish_speech_url)
+    _tts = TTSService(settings.data_dir / "voice")
     _agent_loop = AgentLoop(
         llm_client=llm_client,
         soul_loader=_soul_loader,
         circumstances=settings.circumstances,
+        history_path=str(settings.data_dir / "conversation.json"),
     )
+    log.info("服务初始化完成")
 
 
 def _get_agent_loop() -> AgentLoop:
@@ -41,64 +48,177 @@ def _get_tts() -> TTSService:
     return _tts
 
 
-# ─── 对话路由（统一语音输出） ────────────────────────
+# ─── 对话路由（文字即时返回 + 音频独立请求） ────────
+
+
+@router.get("/chat/history")
+async def get_chat_history():
+    """返回对话历史（供前端恢复会话）"""
+    loop = _get_agent_loop()
+    return {"messages": loop.messages}
+
+
+@router.delete("/chat/history")
+async def delete_chat_history():
+    """删除会话：清空对话历史 + memory daily"""
+    loop = _get_agent_loop()
+    loop.delete_history()
+
+    # 清理 memory/daily 目录下所有 daily markdown 文件
+    import shutil
+    from pathlib import Path
+    memory_daily = Path(__file__).resolve().parent.parent.parent / "memory" / "daily"
+    if memory_daily.exists():
+        shutil.rmtree(memory_daily)
+        memory_daily.mkdir(parents=True, exist_ok=True)
+        log.info("Memory daily 目录已清空: %s", memory_daily)
+
+    log.info("会话已删除")
+    return {"status": "ok"}
+
 
 @router.post("/chat")
 async def chat_text(body: dict):
     """
-    文字对话 → 语音输出。
-    前端 fetch 音频 blob 后播放。
+    文字对话 → 即时返回文字 + TTS 配置。
+    前端拿到文字后立即显示，再用 /chat/audio 单独获取音频。
     """
     user_message = body.get("message", "")
     if not user_message:
         raise HTTPException(status_code=400, detail="Message is required")
 
+    log.info("收到文字对话请求: %s...", user_message[:50])
+
+    settings = Settings.get()
+    if not settings.llm.api_key or not settings.llm.base_url:
+        log.error("LLM 未配置，拒绝对话请求")
+        raise HTTPException(status_code=400, detail="请先在设置页面配置 LLM 参数（Base URL、API Key、Model）")
+
     loop = _get_agent_loop()
     tts = _get_tts()
 
-    results = []
-    async for item in loop.run(user_message):
-        results.append(item)
+    try:
+        results = []
+        async for item in loop.run(user_message):
+            results.append(item)
+        log.debug("AgentLoop 完成，results 数量: %d", len(results))
+    except Exception as e:
+        reason = str(e)
+        log.error("LLM 调用失败: %s\n%s", reason, traceback.format_exc())
+        if "404" in reason or "Not Found" in reason:
+            detail = "LLM 接口地址错误（404），请检查 Base URL 是否正确。DeepSeek 用户请填写 https://api.deepseek.com，OpenAI 用户请填写 https://api.openai.com/v1"
+        elif "401" in reason or "Unauthorized":
+            detail = "LLM API Key 无效（401），请检查设置中的 API Key 是否正确"
+        elif "Connection" in reason or "connect" in reason or "Name or service not known" in reason:
+            detail = "无法连接 LLM 服务，请检查 Base URL 地址和网络连接"
+        else:
+            detail = f"LLM 调用失败: {reason}"
+        raise HTTPException(status_code=502, detail=detail)
 
     response_text = results[0] if results else ""
     tts_config = results[1] if len(results) > 1 else TTSConfig()
+    log.info("LLM 响应长度: %d 字符, TTS 配置: emotion=%s speed=%.2f",
+             len(response_text), tts_config.emotion, tts_config.speed)
 
-    async def audio_stream():
-        async for chunk in tts.speak(response_text, tts_config):
-            yield chunk
-
-    return StreamingResponse(audio_stream(), media_type="audio/wav",
-                             headers={"X-Response-Text": response_text})
+    return {
+        "response_text": response_text,
+        "emotion": tts_config.emotion,
+        "speed": tts_config.speed,
+        "has_voice": tts.has_reference,
+    }
 
 
 @router.post("/chat/voice")
 async def chat_voice(audio: UploadFile = File(...)):
     """
-    语音对话 → 语音输出。
+    语音对话 → 即时返回文字 + TTS 配置。
     """
+    log.info("收到语音对话请求, filename=%s", audio.filename)
+
     settings = Settings.get()
+    if not settings.llm.api_key or not settings.llm.base_url:
+        log.error("LLM 未配置，拒绝语音对话请求")
+        raise HTTPException(status_code=400, detail="请先在设置页面配置 LLM 参数（Base URL、API Key、Model）")
+
     audio_bytes = await audio.read()
-    asr = ASRService(settings.voice.fish_speech_url)
+    log.debug("语音数据大小: %d bytes", len(audio_bytes))
+
+    asr = ASRService()
 
     # ASR: audio → text
-    text = await asr.transcribe(audio_bytes)
+    try:
+        text = await asr.transcribe(audio_bytes)
+        log.info("ASR 识别结果: %s...", text[:50])
+    except Exception as e:
+        log.error("ASR 识别失败: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"语音识别失败: {str(e)}")
+
+    if not text.strip():
+        log.warning("ASR 识别为空")
+        raise HTTPException(status_code=400, detail="未能识别到语音内容，请重试")
 
     loop = _get_agent_loop()
     tts = _get_tts()
 
-    results = []
-    async for item in loop.run(text):
-        results.append(item)
+    try:
+        results = []
+        async for item in loop.run(text):
+            results.append(item)
+        log.debug("AgentLoop 完成，results 数量: %d", len(results))
+    except Exception as e:
+        reason = str(e)
+        log.error("LLM 调用失败: %s\n%s", reason, traceback.format_exc())
+        if "404" in reason or "Not Found" in reason:
+            detail = "LLM 接口地址错误（404），请检查 Base URL 是否正确。DeepSeek 用户请填写 https://api.deepseek.com，OpenAI 用户请填写 https://api.openai.com/v1"
+        elif "401" in reason or "Unauthorized":
+            detail = "LLM API Key 无效（401），请检查设置中的 API Key 是否正确"
+        elif "Connection" in reason or "connect" in reason or "Name or service not known" in reason:
+            detail = "无法连接 LLM 服务，请检查 Base URL 地址和网络连接"
+        else:
+            detail = f"LLM 调用失败: {reason}"
+        raise HTTPException(status_code=502, detail=detail)
 
     response_text = results[0] if results else ""
     tts_config = results[1] if len(results) > 1 else TTSConfig()
+    log.info("LLM 响应长度: %d 字符, TTS 配置: emotion=%s speed=%.2f",
+             len(response_text), tts_config.emotion, tts_config.speed)
+
+    return {
+        "response_text": response_text,
+        "emotion": tts_config.emotion,
+        "speed": tts_config.speed,
+        "has_voice": tts.has_reference,
+    }
+
+
+@router.post("/chat/audio")
+async def chat_audio(body: dict):
+    """
+    根据文字生成 TTS 音频流（独立请求，不影响文字回复速度）。
+    body: {text, emotion, speed}
+    """
+    text = body.get("text", "")
+    emotion = body.get("emotion", "neutral")
+    speed = body.get("speed", 1.0)
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    log.info("收到音频合成请求, 文本长度=%d, emotion=%s, speed=%.2f", len(text), emotion, speed)
+
+    tts = _get_tts()
+    tts_config = TTSConfig(emotion=emotion, speed=speed)
 
     async def audio_stream():
-        async for chunk in tts.speak(response_text, tts_config):
-            yield chunk
+        try:
+            async for chunk in tts.speak(text, tts_config):
+                yield chunk
+            log.debug("TTS 音频流完成")
+        except Exception as e:
+            log.error("TTS 音频流失败: %s\n%s", e, traceback.format_exc())
+            yield b""
 
-    return StreamingResponse(audio_stream(), media_type="audio/wav",
-                             headers={"X-Response-Text": response_text})
+    return StreamingResponse(audio_stream(), media_type="audio/wav")
 
 
 # ─── 灵魂管理路由 ──────────────────────────────────────
@@ -197,9 +317,7 @@ async def get_settings():
             "model": settings.llm.model,
             "api_key": "***" if settings.llm.api_key else "",
         },
-        "voice": {
-            "fish_speech_url": settings.voice.fish_speech_url,
-        },
+        "log_level": settings.log_level,
     }
 
 
@@ -208,37 +326,47 @@ async def update_settings(body: dict):
     settings = Settings.get()
     if "llm" in body:
         settings.update_llm(**body["llm"])
-    if "voice" in body:
-        settings.update_voice(**body["voice"])
+    if "log_level" in body:
+        level = body["log_level"]
+        if level not in ("debug", "error"):
+            raise HTTPException(status_code=400, detail="log_level 必须为 'debug' 或 'error'")
+        log.info("日志等级切换: %s → %s", settings.log_level, level)
+        settings.update_log_level(level)
     return {"status": "ok"}
 
 
 @router.post("/settings/voice/upload")
-async def upload_voice_sample(audio: UploadFile = File(...), name: str = "soul_voice"):
+async def upload_voice_sample(audio: UploadFile = File(...)):
     """
-    上传参考音频 → Fish Speech 创建声纹克隆 → 返回 speaker_id 并自动保存。
+    上传参考音频 → 保存为本地声音克隆参考文件。
     """
-    settings = Settings.get()
     audio_bytes = await audio.read()
-    tts = TTSService(settings.voice.fish_speech_url)
-    try:
-        speaker_id = await tts.create_voice(name, audio_bytes)
-    except Exception as e:
-        reason = str(e)
-        if "502" in reason or "Bad Gateway" in reason:
-            detail = "语音服务未启动，请检查语音服务地址是否正确（当前: " + settings.voice.fish_speech_url + "）"
-        elif "Connection" in reason or "connect" in reason:
-            detail = "无法连接语音服务，请确认服务已启动"
-        else:
-            detail = "声纹创建失败，请稍后重试"
-        raise HTTPException(status_code=502, detail=detail)
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="音频数据为空")
 
-    settings.update_voice(speaker=speaker_id)
+    log.info("收到声音档案上传, 大小: %d bytes", len(audio_bytes))
+    try:
+        _get_tts().save_reference_audio(audio_bytes)
+        log.info("声音档案保存成功, path=%s", _get_tts()._ref_audio_path)
+    except Exception as e:
+        log.error("声音档案保存失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"音频保存失败: {str(e)}")
+
     return {"status": "ok"}
+
+
+@router.get("/settings/voice/status")
+async def get_voice_status():
+    """返回声音档案状态"""
+    has_ref = _get_tts().has_reference
+    log.debug("声音档案状态: has_reference=%s", has_ref)
+    return {"has_reference": has_ref}
 
 
 @router.post("/settings/test-llm")
 async def test_llm_connection():
     settings = Settings.get()
+    log.info("测试 LLM 连接...")
     ok = await LLMManager.test_connection(settings.llm)
+    log.info("LLM 连接测试结果: %s", "成功" if ok else "失败")
     return {"connected": ok}

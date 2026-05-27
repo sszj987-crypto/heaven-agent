@@ -1,7 +1,9 @@
 from ..base import PipelineModule
 from ...context import PipelineContext
 from ...pipeline import Pipeline
+from ....config.logger import get_logger
 
+log = get_logger("compress")
 
 DEFAULT_MAX_TURNS = 20       # 超过 20 轮触发压缩
 DEFAULT_MAX_CHARS = 20_000   # 对话字符数超过 20k 触发压缩
@@ -22,10 +24,13 @@ class ContextCompressModule(PipelineModule):
 
     _max_turns: int = DEFAULT_MAX_TURNS
     _max_chars: int = DEFAULT_MAX_CHARS
+    _llm = None
+    _messages = None
 
-    def _set_deps(self, llm_client, message_manager):
-        self._llm = llm_client
-        self._messages = message_manager
+    @classmethod
+    def set_deps(cls, llm_client, message_manager):
+        cls._llm = llm_client
+        cls._messages = message_manager
 
     @classmethod
     def configure(cls, max_turns: int = 20, max_chars: int = 20_000):
@@ -38,8 +43,10 @@ class ContextCompressModule(PipelineModule):
         chars = self._messages.conversation_chars
 
         if turns <= self._max_turns and chars <= self._max_chars:
+            log.debug("无需压缩, turns=%d/%d, chars=%d/%d", turns, self._max_turns, chars, self._max_chars)
             return ctx  # 未超阈值，不压缩
 
+        log.info("触发上下文压缩, turns=%d, chars=%d", turns, chars)
         # 异步触发摘要（不阻塞当前回复）
         import asyncio
         asyncio.create_task(self._compress())
@@ -67,8 +74,9 @@ class ContextCompressModule(PipelineModule):
                 keep_recent=len(conv) - half,
                 summary=summary,
             )
-        except Exception:
-            pass  # 压缩失败不影响主流程
+            log.info("上下文压缩完成, 摘要=%s...", summary[:50])
+        except Exception as e:
+            log.error("上下文压缩失败: %s", e)
 
     @classmethod
     def get_thresholds(cls) -> dict:

@@ -52,3 +52,21 @@ class MessageManager:
     def clear(self):
         """清除对话历史"""
         self._messages.clear()
+
+    def save_to_file(self, path) -> None:
+        """将对话历史保存为 JSON 文件"""
+        import json
+        from pathlib import Path
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(self._messages, ensure_ascii=False, indent=2))
+
+    def load_from_file(self, path) -> bool:
+        """从 JSON 文件加载对话历史，返回是否成功"""
+        from pathlib import Path
+        p = Path(path)
+        if not p.exists():
+            return False
+        import json
+        self._messages = json.loads(p.read_text())
+        return True

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   fetchSoul, fetchDimension, updateDimension,
   uploadVoiceSample, fetchCircumstances, updateCircumstances,
+  fetchVoiceStatus,
   type SceneOption,
 } from "@/lib/api";
 
@@ -34,7 +35,14 @@ export default function SoulPage() {
   const [soulName, setSoulName] = useState("");
   const [originalName, setOriginalName] = useState("");
 
-  // 声纹状态
+  // 声纹状态 —— 优先从 localStorage 读取，避免页面切换后闪烁
+  const [voiceReady, setVoiceReady] = useState(() => {
+    try {
+      return localStorage.getItem("voice_ready") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [recording, setRecording] = useState(false);
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const [voiceMsg, setVoiceMsg] = useState("");
@@ -69,6 +77,13 @@ export default function SoulPage() {
         setOriginalSceneContent(data.content);
         setScenes(data.scenes);
         setCurrentSceneKey(data.scene);
+      })
+      .catch(() => {});
+    // 异步校验声音档案状态，同步更新 localStorage
+    fetchVoiceStatus()
+      .then((s) => {
+        setVoiceReady(s.has_reference);
+        try { localStorage.setItem("voice_ready", String(s.has_reference)); } catch {}
       })
       .catch(() => {});
   }, []);
@@ -200,6 +215,8 @@ export default function SoulPage() {
     setVoiceMsg("");
     try {
       await uploadVoiceSample(audioBlob);
+      setVoiceReady(true);
+      try { localStorage.setItem("voice_ready", "true"); } catch {}
       setVoiceMsg("音色创建成功，后端已保存");
     } catch (err) {
       setVoiceMsg(err instanceof Error ? err.message : "音色上传失败");
@@ -214,6 +231,18 @@ export default function SoulPage() {
     : activeTab === "scene"
       ? sceneContent !== originalSceneContent
       : false;
+
+  // 快捷键保存 Ctrl/Cmd+S
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   return (
     <div className="flex h-[calc(100vh-57px)]">
@@ -267,6 +296,7 @@ export default function SoulPage() {
       {/* 右侧面板 */}
       {activeTab === "voice" ? (
         <VoicePanel
+          voiceReady={voiceReady}
           voiceMsg={voiceMsg}
           recording={recording}
           uploadingVoice={uploadingVoice}
@@ -416,6 +446,7 @@ function ScenePanel({
 }
 
 function VoicePanel({
+  voiceReady,
   voiceMsg,
   recording,
   uploadingVoice,
@@ -424,6 +455,7 @@ function VoicePanel({
   onStopRecording,
   onFileUpload,
 }: {
+  voiceReady: boolean;
   voiceMsg: string;
   recording: boolean;
   uploadingVoice: boolean;
@@ -439,6 +471,14 @@ function VoicePanel({
       </div>
 
       <div className="flex-1 p-6 space-y-6 overflow-y-auto">
+        {/* 声音档案状态卡片 */}
+        <div className={`rounded-xl border p-4 flex items-center gap-3 ${voiceReady ? "border-green-500/30 bg-green-500/5" : "border-white/10 bg-white/5"}`}>
+          <div className={`w-3 h-3 rounded-full ${voiceReady ? "bg-green-400" : "bg-white/20"}`} />
+          <span className="text-sm">
+            {voiceReady ? "声音档案已就绪，对话时将使用此音色合成语音" : "尚未上传声音档案，对话时将使用默认音色"}
+          </span>
+        </div>
+
         <p className="text-sm text-white/40 leading-relaxed">
           为灵魂注入声音——上传或录制逝者生前的语音样本（如语音消息、视频片段），系统将根据此样本合成相似音色。建议 10-30 秒清晰语音。
         </p>

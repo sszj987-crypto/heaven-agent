@@ -6,7 +6,7 @@ import { fetchSettings, updateSettings, testLLMConnection, type Settings } from 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [llmForm, setLLMForm] = useState({ base_url: "", model: "", api_key: "" });
-  const [voiceUrl, setVoiceUrl] = useState("");
+  const [logLevel, setLogLevel] = useState("error");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
@@ -17,11 +17,11 @@ export default function SettingsPage() {
       .then((s) => {
         setSettings(s);
         setLLMForm({ base_url: s.llm.base_url, model: s.llm.model, api_key: s.llm.api_key });
-        setVoiceUrl(s.voice.fish_speech_url);
+        setLogLevel(s.log_level || "error");
       })
       .catch(() => {
         setMsg("无法加载配置，请确认后端服务已启动");
-        setSettings({ llm: { base_url: "", model: "", api_key: "" }, voice: { fish_speech_url: "" } });
+        setSettings({ llm: { base_url: "", model: "", api_key: "" }, log_level: "error" });
       });
   }, []);
 
@@ -40,18 +40,16 @@ export default function SettingsPage() {
     }
   }, [llmForm]);
 
-  const handleSaveVoice = useCallback(async () => {
-    setSaving(true);
-    setMsg("");
+  const handleLogLevelChange = useCallback(async (level: string) => {
+    setLogLevel(level);
     try {
-      await updateSettings({ voice: { fish_speech_url: voiceUrl } });
-      setMsg("语音配置已保存");
+      await updateSettings({ log_level: level });
+      setMsg("日志等级已切换到 " + level);
     } catch {
-      setMsg("保存失败");
-    } finally {
-      setSaving(false);
+      setMsg("日志等级保存失败");
+      setLogLevel(level === "debug" ? "error" : "debug"); // 回滚
     }
-  }, [voiceUrl]);
+  }, []);
 
   const handleTest = useCallback(async () => {
     setTesting(true);
@@ -124,30 +122,27 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Voice 配置 */}
+      {/* 日志等级 */}
       <section className="space-y-4">
-        <h3 className="text-sm text-white/50 uppercase tracking-wider">语音</h3>
+        <h3 className="text-sm text-white/50 uppercase tracking-wider">日志等级</h3>
+        <p className="text-xs text-white/30">控制后端日志输出详细程度。debug 模式会输出所有日志，error 模式仅输出错误。</p>
 
-        <label className="block">
-          <span className="text-xs text-white/30">语音服务 URL</span>
-          <input
-            value={voiceUrl}
-            onChange={(e) => setVoiceUrl(e.target.value)}
-            className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white/30"
-          />
-        </label>
-
-        <p className="text-xs text-white/15">
-          音色配置（录制/上传逝者声音样本）请在「灵魂档案 → 语音音色」中进行
-        </p>
-
-        <button
-          onClick={handleSaveVoice}
-          disabled={saving}
-          className="px-4 py-2 text-sm rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
-        >
-          保存语音配置
-        </button>
+        <div className="flex gap-3">
+          {(["error", "debug"] as const).map((level) => (
+            <button
+              key={level}
+              onClick={() => handleLogLevelChange(level)}
+              className={`px-4 py-2 text-sm rounded-lg border transition-colors ${
+                logLevel === level
+                  ? "bg-white/20 border-white/30 text-white"
+                  : "bg-white/5 border-white/10 text-white/40 hover:border-white/20 hover:text-white/60"
+              }`}
+            >
+              {level === "debug" ? "Debug（详细）" : "Error（仅错误）"}
+              {logLevel === level && <span className="ml-2 text-green-400">✓</span>}
+            </button>
+          ))}
+        </div>
       </section>
 
       {msg && <p className="text-sm text-white/40">{msg}</p>}

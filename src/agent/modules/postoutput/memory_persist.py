@@ -6,7 +6,7 @@ from ...context import PipelineContext
 from ...pipeline import Pipeline
 
 # 默认存储根目录: 项目根目录/memory/daily
-DEFAULT_MEMORY_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "memory" / "daily"
+DEFAULT_MEMORY_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent / "memory" / "daily"
 
 
 @Pipeline.register(slot="postoutput", order=2)
@@ -17,9 +17,11 @@ class MemoryPersistModule(PipelineModule):
     """
 
     _memory_root: Path = DEFAULT_MEMORY_ROOT
+    _messages = None
 
-    def _set_deps(self, message_manager):
-        self._messages = message_manager
+    @classmethod
+    def set_deps(cls, message_manager):
+        cls._messages = message_manager
 
     @classmethod
     def configure(cls, memory_root: Path):

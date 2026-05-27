@@ -30,7 +30,7 @@ echo "===== 启动 VoiceFromHeaven ====="
 
 # 启动后端 (FastAPI)
 cd "$ROOT"
-python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8326 >> "$LOG_DIR/backend.log" 2>&1 &
+.venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8326 >> "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "后端已启动 (PID: $BACKEND_PID, port: 8326, log: $LOG_DIR/backend.log)"
 

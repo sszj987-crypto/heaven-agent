@@ -11,7 +11,11 @@ from src.config.settings import Settings
 from src.api.routes import router, init_services
 
 # 初始化配置
-Settings.init(ROOT / "config")
+settings = Settings.init(ROOT / "config")
+
+# 初始化日志
+from src.config.logger import init_logger
+init_logger(settings.log_level)
 
 app = FastAPI(title="VoiceFromHeaven", version="0.1.0")
 

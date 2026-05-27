@@ -11,15 +11,8 @@ class LLMConfig:
 
 
 @dataclass
-class VoiceConfig:
-    fish_speech_url: str = "http://localhost:8080"
-    speaker: str = ""  # Fish Speech 说话人/音色 ID
-
-
-@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
-    voice: VoiceConfig = field(default_factory=VoiceConfig)
     soul_path: str = "config/souls/demo"
 
 
@@ -36,11 +29,6 @@ class ConfigLoader:
         if llm_path.exists():
             llm_data = json.loads(llm_path.read_text())
             config.llm = LLMConfig(**llm_data)
-
-        voice_path = self._config_dir / "voice.json"
-        if voice_path.exists():
-            voice_data = json.loads(voice_path.read_text())
-            config.voice = VoiceConfig(**voice_data)
 
         app_path = self._config_dir / "app.json"
         if app_path.exists():

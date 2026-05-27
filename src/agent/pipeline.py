@@ -1,5 +1,8 @@
 from .context import PipelineContext
 from .modules.base import PipelineModule
+from ..config.logger import get_logger
+
+log = get_logger("pipeline")
 
 
 class Pipeline:
@@ -19,6 +22,8 @@ class Pipeline:
         self._prellm = self._collect("prellm")
         self._postllm = self._collect("postllm")
         self._postoutput = self._collect("postoutput")
+        log.debug("Pipeline 初始化, prellm=%d, postllm=%d, postoutput=%d",
+                  len(self._prellm), len(self._postllm), len(self._postoutput))
 
     def _collect(self, slot: str) -> list[PipelineModule]:
         items = sorted(
@@ -29,15 +34,18 @@ class Pipeline:
 
     async def run_prellm(self, ctx: PipelineContext) -> PipelineContext:
         for module in self._prellm:
+            log.debug("PreLLM: 执行 %s", module.__class__.__name__)
             ctx = await module.process(ctx)
         return ctx
 
     async def run_postllm(self, ctx: PipelineContext) -> PipelineContext:
         for module in self._postllm:
+            log.debug("PostLLM: 执行 %s", module.__class__.__name__)
             ctx = await module.process(ctx)
         return ctx
 
     async def run_postoutput(self, ctx: PipelineContext) -> PipelineContext:
         for module in self._postoutput:
+            log.debug("PostOutput: 执行 %s", module.__class__.__name__)
             ctx = await module.process(ctx)
         return ctx

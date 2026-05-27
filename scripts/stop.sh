@@ -25,4 +25,7 @@ fi
 pkill -f "uvicorn src.main:app" 2>/dev/null && echo "已停止 uvicorn 进程" || true
 pkill -f "next dev" 2>/dev/null && echo "已停止 next dev 进程" || true
 
+echo "" > $ROOT/log/backend.log
+echo "" > $ROOT/log/frontend.log
+
 echo "===== 已停止 ====="

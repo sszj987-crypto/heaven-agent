@@ -6,7 +6,7 @@ export interface SoulProfile {
 
 export interface Settings {
   llm: { base_url: string; model: string; api_key: string };
-  voice: { fish_speech_url: string };
+  log_level: string;
 }
 
 export interface SceneOption {
@@ -43,9 +43,15 @@ export async function fetchSettings(): Promise<Settings> {
   return res.json();
 }
 
-export async function updateSettings(data: Partial<{ llm: Record<string, string>; voice: Record<string, string> }>) {
+export async function updateSettings(data: Partial<{ llm: Record<string, string>; voice: Record<string, string>; log_level: string }>) {
   const res = await fetch(`${BASE}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
   if (!res.ok) throw new Error(`Failed to update settings: ${res.status}`);
+}
+
+export async function fetchVoiceStatus(): Promise<{ has_reference: boolean }> {
+  const res = await fetch(`${BASE}/settings/voice/status`);
+  if (!res.ok) throw new Error(`Failed to fetch voice status: ${res.status}`);
+  return res.json();
 }
 
 export async function uploadVoiceSample(audioBlob: Blob): Promise<void> {
@@ -91,29 +97,74 @@ export async function updateDimension(dimension: string, content: string) {
   if (!res.ok) throw new Error(`Failed to update dimension: ${res.status}`);
 }
 
-export async function sendTextMessage(message: string): Promise<{ audioBlob: Blob; responseText: string }> {
+export interface ChatResponse {
+  responseText: string;
+  hasVoice: boolean;
+  ttsParams: { text: string; emotion: string; speed: number };
+}
+
+export async function sendTextMessage(message: string): Promise<ChatResponse> {
   const res = await fetch(`${BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
   });
-  if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
-  const audioBlob = await res.blob();
-  const responseText = res.headers.get("X-Response-Text") || "";
-  return { audioBlob, responseText };
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error((detail.detail as string) || `对话失败 (${res.status})`);
+  }
+  const data = await res.json();
+  return {
+    responseText: data.response_text,
+    hasVoice: data.has_voice,
+    ttsParams: { text: data.response_text, emotion: data.emotion, speed: data.speed },
+  };
 }
 
-export async function sendVoiceMessage(audioBlob: Blob): Promise<{ audioBlob: Blob; responseText: string }> {
+export async function sendVoiceMessage(audioBlob: Blob): Promise<ChatResponse> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "recording.wav");
   const res = await fetch(`${BASE}/chat/voice`, {
     method: "POST",
     body: formData,
   });
-  if (!res.ok) throw new Error(`Voice chat failed: ${res.status}`);
-  const respAudioBlob = await res.blob();
-  const responseText = res.headers.get("X-Response-Text") || "";
-  return { audioBlob: respAudioBlob, responseText };
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error((detail.detail as string) || `语音对话失败 (${res.status})`);
+  }
+  const data = await res.json();
+  return {
+    responseText: data.response_text,
+    hasVoice: data.has_voice,
+    ttsParams: { text: data.response_text, emotion: data.emotion, speed: data.speed },
+  };
+}
+
+export interface HistoryMessage {
+  role: string;
+  content: string;
+}
+
+export async function fetchHistory(): Promise<HistoryMessage[]> {
+  const res = await fetch(`${BASE}/chat/history`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.messages || [];
+}
+
+export async function deleteHistory(): Promise<void> {
+  const res = await fetch(`${BASE}/chat/history`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`删除会话失败 (${res.status})`);
+}
+
+export async function fetchAudio(ttsParams: { text: string; emotion: string; speed: number }): Promise<Blob> {
+  const res = await fetch(`${BASE}/chat/audio`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ttsParams),
+  });
+  if (!res.ok) throw new Error(`音频合成失败 (${res.status})`);
+  return res.blob();
 }
 
 export function playAudioBlob(blob: Blob) {
