@@ -36,7 +36,7 @@ class TTSService:
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._ref_audio_path = self._data_dir / REFERENCE_AUDIO_FILE
         self._model = None
-        self._model_path = model_path or "./Fun-CosyVoice3-0.5B-2512-8bit"
+        self._model_path = model_path or "./deps/Fun-CosyVoice3-0.5B-2512-8bit"
         log.debug("TTSService 初始化, data_dir=%s, model_path=%s", self._data_dir, self._model_path)
 
     def _load_model(self):

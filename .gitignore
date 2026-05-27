@@ -11,3 +11,5 @@ Fun-CosyVoice3-*/
 config/llm.json
 config/souls/test/
 config/conversation.json
+config/voice
+deps
