@@ -10,7 +10,7 @@ log = get_logger("asr")
 class ASRService:
     """本地语音识别服务，基于 mlx-whisper"""
 
-    def __init__(self, model: str = "mlx-community/whisper-small"):
+    def __init__(self, model: str = "mlx-community/whisper-small-mlx"):
         self._model = model
 
     async def transcribe(self, audio_bytes: bytes) -> str:

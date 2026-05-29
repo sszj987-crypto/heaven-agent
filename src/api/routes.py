@@ -35,6 +35,19 @@ def init_services():
         circumstances=settings.circumstances,
         history_path=str(settings.data_dir / "conversation.json"),
     )
+
+    # 后台预热 TTS 模型，避免首次请求等待模型加载（~30-60s）
+    import asyncio
+    if _tts.has_reference:
+        async def _warm_up():
+            try:
+                async for _ in _tts.speak("你好"):
+                    pass
+                log.info("TTS 预热完成")
+            except Exception as e:
+                log.warning("TTS 预热失败（非致命）: %s", e)
+        asyncio.ensure_future(_warm_up())
+
     log.info("服务初始化完成")
 
 
