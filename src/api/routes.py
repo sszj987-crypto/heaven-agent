@@ -11,13 +11,14 @@ from ..agent.loop import AgentLoop
 from ..agent.context import TTSConfig
 from ..voice.asr import ASRService
 from ..voice.tts import TTSService
+from ..voice.tts_official import OfficialTTSService
 
 router = APIRouter()
 log = get_logger("api")
 
 # 全局单例，启动时初始化
 _agent_loop: AgentLoop | None = None
-_tts: TTSService | None = None
+_tts: TTSService | OfficialTTSService | None = None
 _soul_loader: SoulLoader | None = None
 
 
@@ -28,7 +29,16 @@ def init_services():
     settings = Settings.get()
     llm_client = LLMManager.get_client(settings.llm)
     _soul_loader = SoulLoader(settings.soul_path)
-    _tts = TTSService(settings.data_dir / "voice")
+
+    # 根据配置选择 TTS 后端
+    _backend = settings.tts_backend
+    if _backend == "official":
+        log.info("使用官方 CosyVoice PyTorch 后端")
+        _tts = OfficialTTSService(settings.data_dir / "voice")
+    else:
+        log.info("使用 CosyVoice3 MLX 后端")
+        _tts = TTSService(settings.data_dir / "voice")
+
     _agent_loop = AgentLoop(
         llm_client=llm_client,
         soul_loader=_soul_loader,
@@ -56,7 +66,7 @@ def _get_agent_loop() -> AgentLoop:
     return _agent_loop
 
 
-def _get_tts() -> TTSService:
+def _get_tts() -> TTSService | OfficialTTSService:
     assert _tts is not None, "init_services() must be called first"
     return _tts
 

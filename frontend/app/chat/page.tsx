@@ -3,7 +3,13 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { sendTextMessage, sendVoiceMessage, fetchAudio, fetchHistory, deleteHistory } from "@/lib/api";
 
-type Message = { role: "user" | "assistant"; content: string; audioUrl?: string; audioLoading?: boolean };
+type Message = {
+  role: "user" | "assistant";
+  content: string;
+  audioUrl?: string;
+  audioLoading?: boolean;
+  textShown?: boolean;
+};
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -12,6 +18,15 @@ export default function ChatPage() {
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // 组件卸载时停止正在播放的音频
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
+  }, []);
 
   // 页面加载时从后端恢复对话历史
   useEffect(() => {
@@ -23,6 +38,23 @@ export default function ChatPage() {
         if (msgs.length > 0) setMessages(msgs);
       }
     }).catch(() => {});
+  }, []);
+
+  const handleReplayAudio = useCallback((url: string) => {
+    // 停止当前播放
+    audioRef.current?.pause();
+    audioRef.current = null;
+    // 开始新播放
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.onended = () => { audioRef.current = null; };
+    audio.play().catch(() => { audioRef.current = null; });
+  }, []);
+
+  const handleToggleText = useCallback((index: number) => {
+    setMessages((prev) => prev.map((m, i) =>
+      i === index ? { ...m, textShown: !m.textShown } : m
+    ));
   }, []);
 
   const handleSendText = useCallback(async () => {
@@ -50,6 +82,7 @@ export default function ChatPage() {
           setMessages((prev) => prev.map((m, i) =>
             i === respIndex ? { ...m, audioUrl: url, audioLoading: false } : m
           ));
+          handleReplayAudio(url);
         } catch {
           setMessages((prev) => prev.map((m, i) =>
             i === respIndex ? { ...m, audioLoading: false } : m
@@ -63,7 +96,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, { role: "assistant", content: `[回复失败] ${reason}` }]);
       setLoading(false);
     }
-  }, [input, loading, messages.length]);
+  }, [input, loading, messages.length, handleReplayAudio]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -110,6 +143,7 @@ export default function ChatPage() {
               setMessages((prev) => prev.map((m, i) =>
                 i === respIndex ? { ...m, audioUrl: url, audioLoading: false } : m
               ));
+              handleReplayAudio(url);
             } catch {
               setMessages((prev) => prev.map((m, i) =>
                 i === respIndex ? { ...m, audioLoading: false } : m
@@ -127,7 +161,7 @@ export default function ChatPage() {
     } catch {
       alert("无法访问麦克风，请检查浏览器权限");
     }
-  }, [messages.length]);
+  }, [messages.length, handleReplayAudio]);
 
   const stopRecording = () => {
     mediaRecorderRef.current?.stop();
@@ -142,11 +176,6 @@ export default function ChatPage() {
     } catch {
       alert("删除失败，请重试");
     }
-  };
-
-  const handlePlayAudio = (url: string) => {
-    const audio = new Audio(url);
-    audio.play().catch(console.error);
   };
 
   return (
@@ -180,24 +209,54 @@ export default function ChatPage() {
                   : "bg-white/5 text-white/70 border border-white/10"
               }`}
             >
-              <p>{m.content}</p>
-              {/* 音频播放按钮 */}
-              {m.audioLoading && (
-                <div className="mt-2 flex items-center gap-2 text-xs text-white/30">
-                  <div className="w-3 h-3 rounded-full border border-white/20 border-t-white/50 animate-spin" />
-                  语音合成中...
-                </div>
-              )}
-              {m.audioUrl && (
-                <button
-                  onClick={() => handlePlayAudio(m.audioUrl!)}
-                  className="mt-2 inline-flex items-center gap-1.5 text-xs text-white/50 hover:text-white/80 transition-colors bg-white/5 hover:bg-white/10 rounded-full px-3 py-1"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                    <polygon points="5,3 19,12 5,21" />
-                  </svg>
-                  播放语音
-                </button>
+              {/* user 消息：直接显示文字 */}
+              {m.role === "user" && <p>{m.content}</p>}
+
+              {/* assistant 消息：语音优先 */}
+              {m.role === "assistant" && (
+                <>
+                  {/* 语音加载中 */}
+                  {m.audioLoading && (
+                    <div className="flex items-center gap-2 text-sm text-white/40">
+                      <div className="w-3 h-3 rounded-full border border-white/20 border-t-white/50 animate-spin" />
+                      语音生成中...
+                    </div>
+                  )}
+
+                  {/* 无语音：fallback 显示文字（历史消息等） */}
+                  {!m.audioUrl && !m.audioLoading && (
+                    <p>{m.content}</p>
+                  )}
+
+                  {/* 语音已就绪 */}
+                  {m.audioUrl && !m.audioLoading && (
+                    <>
+                      {/* 文字：按需展示 */}
+                      {m.textShown && (
+                        <p className="mb-2">{m.content}</p>
+                      )}
+
+                      {/* 音频控制栏 */}
+                      <div className="flex items-center gap-2 text-xs">
+                        <button
+                          onClick={() => handleReplayAudio(m.audioUrl!)}
+                          className="inline-flex items-center gap-1.5 text-white/60 hover:text-white/90 transition-colors bg-white/5 hover:bg-white/10 rounded-full px-3 py-1"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="5,3 19,12 5,21" />
+                          </svg>
+                          重新播放
+                        </button>
+                        <button
+                          onClick={() => handleToggleText(i)}
+                          className="inline-flex items-center gap-1 text-white/40 hover:text-white/70 transition-colors rounded-full px-3 py-1"
+                        >
+                          {m.textShown ? "隐藏文字" : "转成文字"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </>
               )}
             </div>
           </div>

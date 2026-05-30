@@ -1,4 +1,5 @@
 {
   "soul_path": "config/souls/test",
-  "log_level": "debug"
+  "log_level": "debug",
+  "tts_backend": "mlx"
 }

@@ -25,11 +25,35 @@ _DEFAULT_INSTRUCT = "用平静自然的语气说话。"
 def _parse_llm_response(raw: str) -> tuple[str, str]:
     """
     从 LLM 响应中提取 reply 和 instruct。
-    期望 JSON 格式：{"reply": "...", "instruct": "..."}。
+    期望 JSON 格式：{"reply": "..."}。
     解析失败时整段文本作为 reply，使用默认语气。
     """
     text = raw.strip()
 
+    # 诊断日志：用 repr 显示不可见字符
+    if text:
+        log.debug("LLM 响应 (repr): %s", repr(text[:500]))
+    else:
+        log.warning("LLM 响应 strip 后为空, raw_len=%d, raw_repr=%s", len(raw), repr(raw[:200]))
+
+    # 去除 markdown 代码块包裹（模型有时会忽略"不要用代码块"的指令）
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # 找到代码块结束位置
+        end_idx = None
+        for i in range(1, len(lines)):
+            if lines[i].strip().startswith("```"):
+                end_idx = i
+                break
+        if end_idx is not None:
+            text = "\n".join(lines[1:end_idx]).strip()
+            log.debug("去除 markdown 代码块后: %s", repr(text[:300]))
+        elif len(lines) > 1:
+            # 只有开头 ``` 没有结尾 ```，尝试去掉第一行
+            text = "\n".join(lines[1:]).strip()
+            log.debug("去除开头 ``` 后: %s", repr(text[:300]))
+
+    # 尝试解析 JSON
     try:
         data = json.loads(text)
         reply = str(data.get("reply", "")).strip()
@@ -38,10 +62,10 @@ def _parse_llm_response(raw: str) -> tuple[str, str]:
             log.debug("JSON 解析成功: reply=%d chars, instruct=%s", len(reply), instruct)
             return reply, instruct or _DEFAULT_INSTRUCT
         else:
-            log.warning("JSON 中 reply 为空")
+            log.warning("JSON 中 reply 为空, raw=%s", repr(text[:200]))
             return text, _DEFAULT_INSTRUCT
-    except (json.JSONDecodeError, TypeError, AttributeError):
-        log.warning("LLM 响应不是合法 JSON，使用原始文本作为回复")
+    except (json.JSONDecodeError, TypeError, AttributeError) as e:
+        log.warning("LLM 响应不是合法 JSON: %s, raw=%s", e, repr(text[:300]))
         return text, _DEFAULT_INSTRUCT
 
 

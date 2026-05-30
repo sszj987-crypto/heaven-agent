@@ -47,6 +47,10 @@ class Settings:
         return self._circumstances
 
     @property
+    def tts_backend(self) -> str:
+        return self._config.tts_backend
+
+    @property
     def log_level(self) -> str:
         return self._log_level
 
