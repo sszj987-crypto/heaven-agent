@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   fetchSoul, fetchDimension, updateDimension,
   uploadVoiceSample, fetchCircumstances, updateCircumstances,
-  fetchVoiceStatus,
-  type SceneOption,
+  fetchVoiceStatus, distillSoul,
+  type SceneOption, type DistillResult,
 } from "@/lib/api";
 
 const DIMENSION_LABELS: Record<string, string> = {
@@ -55,6 +55,14 @@ export default function SoulPage() {
   const [originalSceneContent, setOriginalSceneContent] = useState("");
   const [scenes, setScenes] = useState<SceneOption[]>([]);
   const [currentSceneKey, setCurrentSceneKey] = useState("");
+
+  // 蒸馏状态
+  const [distillFile, setDistillFile] = useState<File | null>(null);
+  const [distilling, setDistilling] = useState(false);
+  const [distillResult, setDistillResult] = useState<DistillResult | null>(null);
+  const [distillError, setDistillError] = useState("");
+  const distillDropRef = useRef<HTMLDivElement>(null);
+  const distillInputRef = useRef<HTMLInputElement>(null);
 
   // 初始加载
   useEffect(() => {
@@ -119,6 +127,13 @@ export default function SoulPage() {
       setActiveTab("scene");
       setLoading(false);
       setMsg("");
+      return;
+    }
+    if (tab === "distill") {
+      setActiveTab("distill");
+      setLoading(false);
+      setMsg("");
+      setDistillError("");
       return;
     }
     loadDimension(tab);
@@ -225,7 +240,22 @@ export default function SoulPage() {
     }
   }, []);
 
-  const isDimensionTab = activeTab !== "scene" && activeTab !== "voice";
+  const handleDistill = useCallback(async () => {
+    if (!distillFile) return;
+    setDistilling(true);
+    setDistillError("");
+    setDistillResult(null);
+    try {
+      const result = await distillSoul(distillFile);
+      setDistillResult(result);
+    } catch (err) {
+      setDistillError(err instanceof Error ? err.message : "蒸馏失败");
+    } finally {
+      setDistilling(false);
+    }
+  }, [distillFile]);
+
+  const isDimensionTab = activeTab !== "scene" && activeTab !== "voice" && activeTab !== "distill";
   const isModified = isDimensionTab
     ? content !== originalContent || (activeTab === "basic_info" && soulName !== originalName)
     : activeTab === "scene"
@@ -291,6 +321,16 @@ export default function SoulPage() {
         >
           语音音色
         </button>
+        <button
+          onClick={() => switchTab("distill")}
+          className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+            activeTab === "distill"
+              ? "bg-white/10 text-white/80"
+              : "text-white/40 hover:text-white/60 hover:bg-white/5"
+          }`}
+        >
+          聊天记录蒸馏
+        </button>
       </aside>
 
       {/* 右侧面板 */}
@@ -316,6 +356,19 @@ export default function SoulPage() {
           isModified={sceneContent !== originalSceneContent}
           onSave={handleSave}
           msg={msg}
+        />
+      ) : activeTab === "distill" ? (
+        <DistillPanel
+          file={distillFile}
+          onFileSelect={setDistillFile}
+          distilling={distilling}
+          result={distillResult}
+          error={distillError}
+          dropRef={distillDropRef}
+          inputRef={distillInputRef}
+          onDistill={handleDistill}
+          onClear={() => { setDistillFile(null); setDistillResult(null); setDistillError(""); }}
+          onDimensionClick={(dim) => loadDimension(dim)}
         />
       ) : (
         <div className="flex-1 flex flex-col">
@@ -529,6 +582,186 @@ function VoicePanel({
             </p>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function DistillPanel({
+  file,
+  onFileSelect,
+  distilling,
+  result,
+  error,
+  dropRef,
+  inputRef,
+  onDistill,
+  onClear,
+  onDimensionClick,
+}: {
+  file: File | null;
+  onFileSelect: (f: File | null) => void;
+  distilling: boolean;
+  result: DistillResult | null;
+  error: string;
+  dropRef: React.RefObject<HTMLDivElement | null>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onDistill: () => void;
+  onClear: () => void;
+  onDimensionClick: (dim: string) => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer.files[0];
+    if (f && (f.name.endsWith(".txt") || f.name.endsWith(".html") || f.name.endsWith(".htm"))) {
+      onFileSelect(f);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => setDragOver(false);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) onFileSelect(f);
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  return (
+    <div className="flex-1 flex flex-col">
+      <div className="flex items-center px-6 py-3 border-b border-white/10">
+        <h3 className="text-sm text-white/50">聊天记录蒸馏</h3>
+      </div>
+
+      <div className="flex-1 p-6 space-y-6 overflow-y-auto">
+        <p className="text-sm text-white/40 leading-relaxed">
+          上传逝者生前的聊天记录文件（支持 .txt / .html 格式），AI 将自动分析对话内容，
+          提取人格特征并智能合并到灵魂档案的各个维度中。已有内容不会被覆盖，只有新发现或矛盾
+          信息才会更新。
+        </p>
+
+        {/* 文件拖拽区域 */}
+        <div
+          ref={dropRef}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onClick={() => inputRef.current?.click()}
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+            dragOver
+              ? "border-blue-400 bg-blue-500/10"
+              : file
+                ? "border-green-500/30 bg-green-500/5"
+                : "border-white/10 hover:border-white/20 bg-white/[0.02]"
+          }`}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".txt,.html,.htm"
+            onChange={handleInputChange}
+            className="hidden"
+          />
+          {file ? (
+            <div className="space-y-1">
+              <p className="text-sm text-white/70">{file.name}</p>
+              <p className="text-xs text-white/30">
+                {(file.size / 1024).toFixed(1)} KB
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <p className="text-sm text-white/40">
+                拖拽 .txt 或 .html 文件到此处，或点击选择文件
+              </p>
+              <p className="text-xs text-white/20">支持 UTF-8 编码 .txt / .html 格式</p>
+            </div>
+          )}
+        </div>
+
+        {/* 操作按钮 */}
+        <div className="flex gap-3">
+          <button
+            onClick={(e) => { e.stopPropagation(); onDistill(); }}
+            disabled={!file || distilling}
+            className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+              file && !distilling
+                ? "bg-blue-500/20 border border-blue-500/30 hover:bg-blue-500/30 text-white"
+                : "bg-white/5 border border-white/10 text-white/20"
+            }`}
+          >
+            {distilling ? "分析中..." : "开始分析"}
+          </button>
+          {file && !distilling && (
+            <button
+              onClick={onClear}
+              className="px-4 py-2 text-sm rounded-lg bg-white/5 border border-white/10 text-white/40 hover:text-white/60 transition-colors"
+            >
+              清除
+            </button>
+          )}
+        </div>
+
+        {/* Loading */}
+        {distilling && (
+          <div className="flex items-center gap-3 text-sm text-white/30">
+            <div className="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+            AI 正在分析聊天记录，这可能需要几十秒...
+          </div>
+        )}
+
+        {/* 错误 */}
+        {error && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+            <p className="text-sm text-red-400">{error}</p>
+          </div>
+        )}
+
+        {/* 结果 */}
+        {result && (
+          <div className="space-y-4">
+            {/* 摘要 */}
+            {result.summary && (
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                <p className="text-xs text-white/30 mb-1">分析摘要</p>
+                <p className="text-sm text-white/70">{result.summary}</p>
+              </div>
+            )}
+
+            {/* 变化维度 */}
+            {result.changes.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs text-white/30">
+                  以下 {result.changes.length} 个维度已更新，点击可查看：
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {result.changes.map((dim) => (
+                    <button
+                      key={dim}
+                      onClick={() => onDimensionClick(dim)}
+                      className="px-3 py-1.5 text-xs rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 transition-colors"
+                    >
+                      {DIMENSION_LABELS[dim] || dim}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                <p className="text-sm text-white/40">
+                  未发现需要更新的维度，当前档案与聊天记录一致。
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

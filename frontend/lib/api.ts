@@ -173,3 +173,23 @@ export function playAudioBlob(blob: Blob) {
   audio.onended = () => URL.revokeObjectURL(url);
   audio.play().catch(console.error);
 }
+
+export interface DistillResult {
+  changes: string[];
+  profile: Record<string, string>;
+  summary: string;
+}
+
+export async function distillSoul(file: File): Promise<DistillResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${BASE}/soul/distill`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    throw new Error((detail.detail as string) || `蒸馏失败 (${res.status})`);
+  }
+  return res.json();
+}

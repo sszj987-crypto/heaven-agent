@@ -1,4 +1,6 @@
 import json
+import re
+import html as html_mod
 import base64
 import traceback
 from fastapi import APIRouter, HTTPException, UploadFile, File
@@ -12,6 +14,8 @@ from ..agent.context import TTSConfig
 from ..voice.asr import ASRService
 from ..voice.tts import TTSService
 from ..voice.tts_official import OfficialTTSService
+from ..soul.distiller import SoulDistiller
+from ..llm.client import LLMClient
 
 router = APIRouter()
 log = get_logger("api")
@@ -20,14 +24,16 @@ log = get_logger("api")
 _agent_loop: AgentLoop | None = None
 _tts: TTSService | OfficialTTSService | None = None
 _soul_loader: SoulLoader | None = None
+_distiller: SoulDistiller | None = None
+_llm_client: LLMClient | None = None
 
 
 def init_services():
     """应用启动时调用，初始化全局服务"""
-    global _agent_loop, _tts, _soul_loader
+    global _agent_loop, _tts, _soul_loader, _distiller, _llm_client
     log.info("正在初始化服务...")
     settings = Settings.get()
-    llm_client = LLMManager.get_client(settings.llm)
+    _llm_client = LLMManager.get_client(settings.llm)
     _soul_loader = SoulLoader(settings.soul_path)
 
     # 根据配置选择 TTS 后端
@@ -39,8 +45,10 @@ def init_services():
         log.info("使用 CosyVoice3 MLX 后端")
         _tts = TTSService(settings.data_dir / "voice")
 
+    _distiller = SoulDistiller(_llm_client, _soul_loader, progress_dir=settings.data_dir)
+
     _agent_loop = AgentLoop(
-        llm_client=llm_client,
+        llm_client=_llm_client,
         soul_loader=_soul_loader,
         circumstances=settings.circumstances,
         history_path=str(settings.data_dir / "conversation.json"),
@@ -321,6 +329,33 @@ def _get_current_scene_key() -> str:
     return "custom" if current else ""
 
 
+def _extract_text_from_html(html_text: str) -> str:
+    """从 HTML 中提取纯文本，用于聊天记录导出文件。"""
+    # 去除 script/style 标签及其内容
+    text = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+    # <br> → 换行
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    # <p> / </p> → 换行
+    text = re.sub(r'</?p[^>]*>', '\n', text, flags=re.IGNORECASE)
+    # <div> / </div> → 换行（常见于聊天气泡）
+    text = re.sub(r'</?div[^>]*>', '\n', text, flags=re.IGNORECASE)
+    # <li> / </li> → 换行
+    text = re.sub(r'</?li[^>]*>', '\n', text, flags=re.IGNORECASE)
+    # 去除其余所有标签
+    text = re.sub(r'<[^>]+>', '', text)
+    # 解码 HTML 实体 (&amp; &lt; &quot; &#xxx; 等)
+    text = html_mod.unescape(text)
+    # 合并连续空白行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    return text.strip()
+
+
+def _is_html_content(text: str) -> bool:
+    """简单判断文本是否包含 HTML 标签。"""
+    return bool(re.search(r'<(html|head|body|div|p|br|span|table|meta|style|script)\b', text[:2000], re.IGNORECASE))
+
+
 @router.get("/soul/{dimension}")
 async def get_dimension(dimension: str):
     log.info("获取 Soul 维度, dimension=%s", dimension)
@@ -337,6 +372,59 @@ async def update_dimension(dimension: str, body: dict):
     _get_agent_loop().invalidate_soul_cache()
     log.info("Soul 维度更新完成, dimension=%s", dimension)
     return {"status": "ok"}
+
+
+# ─── 灵魂档案蒸馏 ───────────────────────────────────────
+
+@router.post("/soul/distill")
+async def distill_soul(file: UploadFile = File(...)):
+    """
+    上传聊天记录文件（.txt / .html），LLM 分析后智能合并到灵魂档案。
+    返回变化的维度列表和更新后的完整档案。
+    """
+    if _distiller is None:
+        raise HTTPException(status_code=503, detail="蒸馏服务未初始化")
+
+    log.info("收到蒸馏请求, filename=%s", file.filename)
+
+    try:
+        raw_bytes = await file.read()
+        raw_text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="文件编码不支持，请上传 UTF-8 编码的文件")
+
+    log.info("原始文件大小: %d bytes, %d chars", len(raw_bytes), len(raw_text))
+
+    # 自动检测并提取 HTML 中的文本
+    if _is_html_content(raw_text):
+        log.info("检测到 HTML 内容，正在提取纯文本...")
+        chat_text = _extract_text_from_html(raw_text)
+        log.info("HTML 提取完成, 提取后 %d chars (原 %d chars)", len(chat_text), len(raw_text))
+        if not chat_text:
+            raise HTTPException(status_code=400, detail="HTML 文件中未提取到有效文本内容")
+    else:
+        chat_text = raw_text
+
+    if not chat_text.strip():
+        raise HTTPException(status_code=400, detail="聊天记录为空")
+
+    try:
+        result = await _distiller.distill(chat_text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        log.error("蒸馏失败: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"蒸馏失败: {str(e)}")
+
+    # 蒸馏后刷新 SoulContextModule 缓存
+    _get_agent_loop().invalidate_soul_cache()
+
+    log.info("蒸馏完成, changes=%s", result.changes)
+    return {
+        "changes": result.changes,
+        "profile": result.profile,
+        "summary": result.summary,
+    }
 
 
 # ─── 配置路由 ──────────────────────────────────────────
