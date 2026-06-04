@@ -1,9 +1,7 @@
 import json
-import re
-import html as html_mod
 import base64
 import traceback
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, Response
 from ..config.settings import Settings
 from ..config.logger import get_logger
@@ -45,7 +43,7 @@ def init_services():
         log.info("使用 CosyVoice3 MLX 后端")
         _tts = TTSService(settings.data_dir / "voice")
 
-    _distiller = SoulDistiller(_llm_client, _soul_loader, progress_dir=settings.data_dir)
+    _distiller = SoulDistiller(_llm_client, _soul_loader)
 
     _agent_loop = AgentLoop(
         llm_client=_llm_client,
@@ -329,31 +327,17 @@ def _get_current_scene_key() -> str:
     return "custom" if current else ""
 
 
-def _extract_text_from_html(html_text: str) -> str:
-    """从 HTML 中提取纯文本，用于聊天记录导出文件。"""
-    # 去除 script/style 标签及其内容
-    text = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
-    # <br> → 换行
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    # <p> / </p> → 换行
-    text = re.sub(r'</?p[^>]*>', '\n', text, flags=re.IGNORECASE)
-    # <div> / </div> → 换行（常见于聊天气泡）
-    text = re.sub(r'</?div[^>]*>', '\n', text, flags=re.IGNORECASE)
-    # <li> / </li> → 换行
-    text = re.sub(r'</?li[^>]*>', '\n', text, flags=re.IGNORECASE)
-    # 去除其余所有标签
-    text = re.sub(r'<[^>]+>', '', text)
-    # 解码 HTML 实体 (&amp; &lt; &quot; &#xxx; 等)
-    text = html_mod.unescape(text)
-    # 合并连续空白行
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    text = re.sub(r'[ \t]+', ' ', text)
-    return text.strip()
+# ─── 行为规则卡（必须在 /soul/{dimension} 之前）───────────
 
-
-def _is_html_content(text: str) -> bool:
-    """简单判断文本是否包含 HTML 标签。"""
-    return bool(re.search(r'<(html|head|body|div|p|br|span|table|meta|style|script)\b', text[:2000], re.IGNORECASE))
+@router.get("/soul/skill")
+async def get_skill():
+    """返回行为规则卡（skill card）。"""
+    log.info("获取行为规则卡")
+    skill = _soul_loader.load_skill()
+    if skill is None:
+        return {"skill_card": None}
+    log.info("行为规则卡返回, has_content=%s", skill.has_content)
+    return {"skill_card": skill.to_dict()}
 
 
 @router.get("/soul/{dimension}")
@@ -377,15 +361,21 @@ async def update_dimension(dimension: str, body: dict):
 # ─── 灵魂档案蒸馏 ───────────────────────────────────────
 
 @router.post("/soul/distill")
-async def distill_soul(file: UploadFile = File(...)):
+async def distill_soul(file: UploadFile = File(...), chat_name: str = Form("")):
     """
-    上传聊天记录文件（.txt / .html），LLM 分析后智能合并到灵魂档案。
-    返回变化的维度列表和更新后的完整档案。
+    上传 .txt 聊天记录文件，LLM 分析后智能合并到灵魂档案 + 提取行为规则。
+    返回变化的维度列表、更新后的完整档案和行为规则卡。
+
+    chat_name: 目标人物在聊天记录中显示的名字（如微信导出中可能是"我"）
     """
     if _distiller is None:
         raise HTTPException(status_code=503, detail="蒸馏服务未初始化")
 
     log.info("收到蒸馏请求, filename=%s", file.filename)
+
+    # 只接受 .txt 文件
+    if file.filename and not file.filename.lower().endswith(".txt"):
+        raise HTTPException(status_code=400, detail="只支持 .txt 格式的聊天记录文件")
 
     try:
         raw_bytes = await file.read()
@@ -395,21 +385,11 @@ async def distill_soul(file: UploadFile = File(...)):
 
     log.info("原始文件大小: %d bytes, %d chars", len(raw_bytes), len(raw_text))
 
-    # 自动检测并提取 HTML 中的文本
-    if _is_html_content(raw_text):
-        log.info("检测到 HTML 内容，正在提取纯文本...")
-        chat_text = _extract_text_from_html(raw_text)
-        log.info("HTML 提取完成, 提取后 %d chars (原 %d chars)", len(chat_text), len(raw_text))
-        if not chat_text:
-            raise HTTPException(status_code=400, detail="HTML 文件中未提取到有效文本内容")
-    else:
-        chat_text = raw_text
-
-    if not chat_text.strip():
+    if not raw_text.strip():
         raise HTTPException(status_code=400, detail="聊天记录为空")
 
     try:
-        result = await _distiller.distill(chat_text)
+        result = await _distiller.distill(raw_text, chat_name=chat_name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -419,12 +399,17 @@ async def distill_soul(file: UploadFile = File(...)):
     # 蒸馏后刷新 SoulContextModule 缓存
     _get_agent_loop().invalidate_soul_cache()
 
-    log.info("蒸馏完成, changes=%s", result.changes)
-    return {
+    log.info("蒸馏完成, changes=%s, has_skill=%s",
+             result.changes, bool(result.skill_card and result.skill_card.has_content))
+
+    response = {
         "changes": result.changes,
         "profile": result.profile,
         "summary": result.summary,
     }
+    if result.skill_card:
+        response["skill_card"] = result.skill_card.to_dict()
+    return response
 
 
 # ─── 配置路由 ──────────────────────────────────────────

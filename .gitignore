@@ -10,6 +10,7 @@ docs
 Fun-CosyVoice3-*/
 config/llm.json
 config/souls/test/
+config/souls/test copy
 config/conversation.json
 config/voice
 deps

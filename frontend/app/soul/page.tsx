@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   fetchSoul, fetchDimension, updateDimension,
   uploadVoiceSample, fetchCircumstances, updateCircumstances,
-  fetchVoiceStatus, distillSoul,
+  fetchVoiceStatus, distillSoul, fetchSkill,
   type SceneOption, type DistillResult,
 } from "@/lib/api";
 
@@ -56,8 +56,13 @@ export default function SoulPage() {
   const [scenes, setScenes] = useState<SceneOption[]>([]);
   const [currentSceneKey, setCurrentSceneKey] = useState("");
 
+  // 行为规则状态
+  const [skillCard, setSkillCard] = useState<Record<string, string> | null>(null);
+  const [skillLoading, setSkillLoading] = useState(false);
+
   // 蒸馏状态
   const [distillFile, setDistillFile] = useState<File | null>(null);
+  const [distillChatName, setDistillChatName] = useState(soulName);
   const [distilling, setDistilling] = useState(false);
   const [distillResult, setDistillResult] = useState<DistillResult | null>(null);
   const [distillError, setDistillError] = useState("");
@@ -75,6 +80,7 @@ export default function SoulPage() {
         if (match) {
           setSoulName(match[1].trim());
           setOriginalName(match[1].trim());
+          setDistillChatName(match[1].trim());
         }
       })
       .catch(() => {});
@@ -94,6 +100,8 @@ export default function SoulPage() {
         try { localStorage.setItem("voice_ready", String(s.has_reference)); } catch {}
       })
       .catch(() => {});
+    // 加载行为规则
+    loadSkill();
   }, []);
 
   const loadDimension = useCallback(async (dim: string) => {
@@ -116,6 +124,18 @@ export default function SoulPage() {
     loadDimension("basic_info");
   }, [loadDimension]);
 
+  const loadSkill = useCallback(async () => {
+    setSkillLoading(true);
+    try {
+      const data = await fetchSkill();
+      setSkillCard(data);
+    } catch {
+      setSkillCard(null);
+    } finally {
+      setSkillLoading(false);
+    }
+  }, []);
+
   const switchTab = (tab: Tab) => {
     if (tab === "voice") {
       setActiveTab("voice");
@@ -134,6 +154,13 @@ export default function SoulPage() {
       setLoading(false);
       setMsg("");
       setDistillError("");
+      return;
+    }
+    if (tab === "skill") {
+      setActiveTab("skill");
+      setLoading(false);
+      setMsg("");
+      loadSkill();
       return;
     }
     loadDimension(tab);
@@ -246,8 +273,12 @@ export default function SoulPage() {
     setDistillError("");
     setDistillResult(null);
     try {
-      const result = await distillSoul(distillFile);
+      const result = await distillSoul(distillFile, distillChatName || undefined);
       setDistillResult(result);
+      // 蒸馏后刷新行为规则
+      if (result.skill_card) {
+        setSkillCard(result.skill_card);
+      }
     } catch (err) {
       setDistillError(err instanceof Error ? err.message : "蒸馏失败");
     } finally {
@@ -255,7 +286,7 @@ export default function SoulPage() {
     }
   }, [distillFile]);
 
-  const isDimensionTab = activeTab !== "scene" && activeTab !== "voice" && activeTab !== "distill";
+  const isDimensionTab = activeTab !== "scene" && activeTab !== "voice" && activeTab !== "distill" && activeTab !== "skill";
   const isModified = isDimensionTab
     ? content !== originalContent || (activeTab === "basic_info" && soulName !== originalName)
     : activeTab === "scene"
@@ -331,6 +362,16 @@ export default function SoulPage() {
         >
           聊天记录蒸馏
         </button>
+        <button
+          onClick={() => switchTab("skill")}
+          className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+            activeTab === "skill"
+              ? "bg-white/10 text-white/80"
+              : "text-white/40 hover:text-white/60 hover:bg-white/5"
+          }`}
+        >
+          行为规则
+        </button>
       </aside>
 
       {/* 右侧面板 */}
@@ -361,6 +402,8 @@ export default function SoulPage() {
         <DistillPanel
           file={distillFile}
           onFileSelect={setDistillFile}
+          chatName={distillChatName}
+          onChatNameChange={setDistillChatName}
           distilling={distilling}
           result={distillResult}
           error={distillError}
@@ -370,6 +413,8 @@ export default function SoulPage() {
           onClear={() => { setDistillFile(null); setDistillResult(null); setDistillError(""); }}
           onDimensionClick={(dim) => loadDimension(dim)}
         />
+      ) : activeTab === "skill" ? (
+        <SkillPanel skillCard={skillCard} loading={skillLoading} onRefresh={loadSkill} />
       ) : (
         <div className="flex-1 flex flex-col">
           <div className="flex items-center justify-between px-6 py-3 border-b border-white/10">
@@ -590,6 +635,8 @@ function VoicePanel({
 function DistillPanel({
   file,
   onFileSelect,
+  chatName,
+  onChatNameChange,
   distilling,
   result,
   error,
@@ -601,6 +648,8 @@ function DistillPanel({
 }: {
   file: File | null;
   onFileSelect: (f: File | null) => void;
+  chatName: string;
+  onChatNameChange: (v: string) => void;
   distilling: boolean;
   result: DistillResult | null;
   error: string;
@@ -616,7 +665,7 @@ function DistillPanel({
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files[0];
-    if (f && (f.name.endsWith(".txt") || f.name.endsWith(".html") || f.name.endsWith(".htm"))) {
+    if (f && f.name.endsWith(".txt")) {
       onFileSelect(f);
     }
   };
@@ -642,7 +691,7 @@ function DistillPanel({
 
       <div className="flex-1 p-6 space-y-6 overflow-y-auto">
         <p className="text-sm text-white/40 leading-relaxed">
-          上传逝者生前的聊天记录文件（支持 .txt / .html 格式），AI 将自动分析对话内容，
+          上传逝者生前的聊天记录文件（仅支持 .txt 格式），AI 将自动分析对话内容，
           提取人格特征并智能合并到灵魂档案的各个维度中。已有内容不会被覆盖，只有新发现或矛盾
           信息才会更新。
         </p>
@@ -665,7 +714,7 @@ function DistillPanel({
           <input
             ref={inputRef}
             type="file"
-            accept=".txt,.html,.htm"
+          accept=".txt"
             onChange={handleInputChange}
             className="hidden"
           />
@@ -679,11 +728,26 @@ function DistillPanel({
           ) : (
             <div className="space-y-1">
               <p className="text-sm text-white/40">
-                拖拽 .txt 或 .html 文件到此处，或点击选择文件
+                拖拽 .txt 文件到此处，或点击选择文件
               </p>
-              <p className="text-xs text-white/20">支持 UTF-8 编码 .txt / .html 格式</p>
+              <p className="text-xs text-white/20">支持 UTF-8 编码 .txt 格式</p>
             </div>
           )}
+        </div>
+
+        {/* 聊天昵称 */}
+        <div className="space-y-1">
+          <label className="text-xs text-white/30">聊天中的昵称</label>
+          <input
+            type="text"
+            value={chatName}
+            onChange={(e) => onChatNameChange(e.target.value)}
+            placeholder="输入目标人物在聊天记录中的名字"
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 outline-none focus:border-white/30 transition-colors"
+          />
+          <p className="text-xs text-white/20">
+            填写目标人物在聊天记录中显示的名字，如微信导出中常为"我"，请替换为实际姓名
+          </p>
         </div>
 
         {/* 操作按钮 */}
@@ -761,6 +825,101 @@ function DistillPanel({
               </div>
             )}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const SKILL_SECTIONS: { key: string; label: string }[] = [
+  { key: "role_playing_rules", label: "扮演规则" },
+  { key: "expression_dna", label: "表达基因" },
+  { key: "decision_heuristics", label: "决策启发式" },
+  { key: "mental_models", label: "思维模型" },
+  { key: "values_anti_patterns", label: "价值观与禁区" },
+  { key: "inner_tensions", label: "内在矛盾" },
+];
+
+function SkillPanel({
+  skillCard,
+  loading,
+  onRefresh,
+}: {
+  skillCard: Record<string, string> | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const [activeSection, setActiveSection] = useState(SKILL_SECTIONS[0].key);
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <span className="text-sm text-white/30">加载中...</span>
+      </div>
+    );
+  }
+
+  if (!skillCard) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-4">
+        <p className="text-sm text-white/40">暂无行为规则</p>
+        <p className="text-xs text-white/20 max-w-md text-center">
+          上传逝者聊天记录进行蒸馏分析，AI 将自动提取表达风格、
+          决策模式、思维模型、价值观等行为规则，用于指导对话扮演。
+        </p>
+        <button
+          onClick={onRefresh}
+          className="px-3 py-1.5 text-xs rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+        >
+          刷新
+        </button>
+      </div>
+    );
+  }
+
+  const activeContent = skillCard[activeSection] || "";
+
+  return (
+    <div className="flex-1 flex flex-col">
+      {/* 顶部标题 */}
+      <div className="flex items-center justify-between px-6 py-3 border-b border-white/10">
+        <h3 className="text-sm text-white/50">行为规则</h3>
+        <button
+          onClick={onRefresh}
+          className="px-3 py-1.5 text-xs rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+        >
+          刷新
+        </button>
+      </div>
+
+      {/* Section 子标签 */}
+      <div className="flex gap-1 px-4 py-2 border-b border-white/5 overflow-x-auto">
+        {SKILL_SECTIONS.map((s) => (
+          <button
+            key={s.key}
+            onClick={() => setActiveSection(s.key)}
+            className={`shrink-0 px-3 py-1 text-xs rounded-md transition-colors ${
+              activeSection === s.key
+                ? "bg-white/15 text-white/80"
+                : "text-white/30 hover:text-white/50 hover:bg-white/5"
+            }`}
+          >
+            {s.label}
+            {skillCard[s.key] && (
+              <span className="ml-1 text-green-400">●</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* 内容区 */}
+      <div className="flex-1 overflow-y-auto p-6">
+        {activeContent ? (
+          <pre className="text-sm text-white/70 font-mono leading-relaxed whitespace-pre-wrap break-words">
+            {activeContent}
+          </pre>
+        ) : (
+          <p className="text-sm text-white/20 italic">此维度暂无内容</p>
         )}
       </div>
     </div>

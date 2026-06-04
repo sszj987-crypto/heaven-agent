@@ -40,11 +40,14 @@ class SoulContextModule(PipelineModule):
         else:
             profile = self._loader.load()
             ctx.soul_profile = profile
-            ctx.system_prompt = self._prompt_builder.build(profile, circumstances)
+            skill_card = self._loader.load_skill() if self._loader.has_skill() else None
+            memories = getattr(ctx, "retrieved_memories", None) or []
+            ctx.system_prompt = self._prompt_builder.build(
+                profile, circumstances, skill_card, memories)
             SoulContextModule._cached_prompt = ctx.system_prompt
-            log.info("构建新 System Prompt, soul=%s, 长度=%d chars, dimensions=%d",
-                     profile.name, len(ctx.system_prompt), len(profile.dimensions))
-            log.debug("System Prompt 维度列表: %s", list(profile.dimensions.keys()))
+            log.info("构建新 System Prompt, soul=%s, 长度=%d chars, has_skill=%s, memories=%d",
+                     profile.name, len(ctx.system_prompt),
+                     bool(skill_card and skill_card.has_content), len(memories))
 
         # 组装 messages: system + 历史消息 + 当前消息
         history = self._messages.get_all()

@@ -1,33 +1,31 @@
 """
-灵魂档案蒸馏器：从聊天记录中一次性提取人格特征，智能合并到灵魂档案。
+灵魂档案蒸馏器：从聊天记录中提取人格特征 + 行为规则，智能合并到灵魂档案。
 
-对大文件自动切分分段处理，支持断点续传：上传同一文件时从失败位置继续。
+两阶段蒸馏：
+  Phase 1: 事实提取（更新 10 个 soul 维度）
+  Phase 2: 女娲式多维度并行行为规则提取（生成 Skill Card）
 
 用法:
-    distiller = SoulDistiller(llm_client, soul_loader, progress_dir=data_dir)
-    result = await distiller.distill(chat_text)
+    distiller = SoulDistiller(llm_client, soul_loader)
+    result = await distiller.distill(raw_chat_text)
     # result.changes → 有变化的维度名列表
     # result.profile → 更新后的全部维度内容
+    # result.skill_card → 行为规则卡（Phase 2 产出）
     # result.summary → LLM 分析摘要
 """
 
-import hashlib
 import json
-import re
-from pathlib import Path
 from dataclasses import dataclass, field
 
 from ..llm.client import LLMClient
 from ..soul.loader import SoulLoader
 from ..soul.profile import DIMENSION_NAMES
+from ..soul.skill_card import SkillCard
+from ..soul.chat_preprocessor import ChatPreprocessor, PreprocessedChat
+from ..soul.phase2_agents import Phase2Agents
 from ..config.logger import get_logger
 
 log = get_logger("distiller")
-
-# 单次 LLM 调用的文本上限（字节），超过则自动切分。
-# 250KB UTF-8 中文 ≈ 85K 汉字 ≈ 110K tokens（实测 2.3 bytes/token）
-# 加上 system prompt + 档案后总计约 115K tokens，128K 上下文窗口安全。
-CHUNK_SIZE_BYTES = 250 * 1024  # 250KB
 
 # 维度中文名
 DIMENSION_LABELS: dict[str, str] = {
@@ -49,231 +47,85 @@ class DistillResult:
     """蒸馏结果"""
     changes: list[str] = field(default_factory=list)    # 有变化的维度名
     profile: dict[str, str] = field(default_factory=dict)  # 更新后的全维度
+    skill_card: SkillCard | None = None                    # Phase 2 产出的行为规则卡
     summary: str = ""                                     # 分析摘要
 
 
 class SoulDistiller:
-    """从聊天记录批量提取人格特征，智能合并到灵魂档案。
+    """从聊天记录批量提取人格特征，智能合并到灵魂档案。"""
 
-    大文件自动切分为多段，每段独立分析后增量合并。
-    支持断点续传：同一文件重复上传时从失败位置继续。
-    """
-
-    def __init__(self, llm_client: LLMClient, soul_loader: SoulLoader,
-                 chunk_size_bytes: int = CHUNK_SIZE_BYTES,
-                 progress_dir: Path | str | None = None):
+    def __init__(self, llm_client: LLMClient, soul_loader: SoulLoader):
         self._llm = llm_client
         self._loader = soul_loader
-        self._chunk_size = chunk_size_bytes
-        self._progress_dir = Path(progress_dir) if progress_dir else None
-        log.info("SoulDistiller 初始化, chunk_size=%d bytes, progress_dir=%s",
-                 self._chunk_size, self._progress_dir)
+        log.info("SoulDistiller 初始化")
 
     # ── 公开接口 ──────────────────────────────────────────
 
-    async def distill(self, chat_text: str) -> DistillResult:
+    async def distill(self, raw_chat_text: str, chat_name: str = "") -> DistillResult:
         """
-        分析聊天记录、更新灵魂档案。
-        同一文件重复调用时自动从上次失败的 chunk 继续。
+        分析聊天记录、更新灵魂档案 + 提取行为规则。
+
+        Args:
+            raw_chat_text: 原始聊天记录（微信/QQ 导出格式）
+            chat_name: 目标人物在聊天记录中显示的名字（为空时使用档案姓名自动匹配）
 
         Raises:
             ValueError: 聊天记录为空
-            RuntimeError: 单段处理时 LLM 调用/解析失败
+            RuntimeError: LLM 调用/解析失败
         """
-        chat_text = chat_text.strip()
-        if not chat_text:
+        raw_chat_text = raw_chat_text.strip()
+        if not raw_chat_text:
             raise ValueError("聊天记录为空")
 
         profile = self._loader.load()
-        text_bytes = len(chat_text.encode("utf-8"))
-        file_hash = _hash_text(chat_text)
-        log.info("蒸馏开始, chat_size=%d chars (%d bytes), soul=%s, hash=%s",
-                 len(chat_text), text_bytes, profile.name, file_hash)
 
-        chunks = self._split_chunks(chat_text) if text_bytes > self._chunk_size else None
+        # 预处理：格式精炼 + 统计提取 + 结构化（Layer 1+2+3）
+        cp = ChatPreprocessor()
+        preprocessed = cp.process(raw_chat_text, target_name=chat_name or profile.name)
+        refined_text = preprocessed.refined_text
+        log.info("预处理完成: raw=%d chars → refined=%d chars, speakers=%d, "
+                 "rounds=%d, opinions=%d, values=%d",
+                 len(raw_chat_text), len(refined_text),
+                 len(preprocessed.speakers), len(preprocessed.dialogue_rounds),
+                 len(preprocessed.opinion_segments), len(preprocessed.value_segments))
 
-        # 小文件：单次处理（不经过断点续传）
-        if chunks is None:
-            return await self._process_single(profile, chat_text)
+        log.info("蒸馏开始, refined_size=%d chars, soul=%s",
+                 len(refined_text), profile.name)
 
-        # 大文件：检查是否有断点可恢复
-        progress = self._load_progress()
-        if progress and progress.get("file_hash") == file_hash:
-            resume_from = progress["resume_from"]
-            if resume_from > 0:
-                log.info("发现断点，从 chunk %d/%d 恢复（已跳过 %d 段）",
-                         resume_from + 1, len(chunks), resume_from)
-                # 恢复累积状态
-                for dim, content in progress["accumulated_dims"].items():
-                    profile.dimensions[dim] = content
-                return await self._process_chunked(
-                    profile, chunks,
-                    resume_from=resume_from,
-                    accumulated_dims=progress["accumulated_dims"],
-                    all_changes=set(progress["all_changes"]),
-                    summaries=progress["summaries"],
-                    file_hash=file_hash,
-                )
-            else:
-                log.info("上次的文件已全部完成，重新开始")
-
-        # 全新开始
-        return await self._process_chunked(
-            profile, chunks,
-            resume_from=0,
-            accumulated_dims={},
-            all_changes=set(),
-            summaries=[],
-            file_hash=file_hash,
-        )
-
-    # ── 单次处理 ──────────────────────────────────────────
-
-    async def _process_single(self, profile, chat_text: str) -> DistillResult:
-        """小文件直接一次 LLM 调用处理并保存。"""
-        new_dimensions, summary = await self._call_llm(profile, chat_text)
+        # Phase 1: 事实提取（使用精炼文本）
+        new_dimensions, summary = await self._call_llm_phase1(profile, refined_text)
         changes = self._save_changes(profile, new_dimensions)
 
-        log.info("蒸馏完成 (single), changes=%s, summary=%s", changes, summary)
+        # Phase 2: 女娲式多维度并行行为规则提取（使用差异化采样）
+        existing_skill = self._loader.load_skill()
+        agents = Phase2Agents(self._llm)
+        skill_card = await agents.run_all(
+            preprocessed, existing_skill, soul_name=profile.name)
+
+        # 保存 Skill Card
+        if skill_card and skill_card.has_content:
+            self._loader.save_skill(skill_card)
+
+        if skill_card and skill_card.has_content:
+            filled = [k for k, v in skill_card.to_dict().items() if v.strip()]
+            summary += f" | 行为规则已提取 ({', '.join(filled)})"
+
+        log.info("蒸馏完成, changes=%s, has_skill=%s",
+                 changes, bool(skill_card and skill_card.has_content))
         return DistillResult(
             changes=changes,
             profile=self._merge_profile(profile, new_dimensions),
+            skill_card=skill_card,
             summary=summary,
         )
-
-    # ── 分段处理 ──────────────────────────────────────────
-
-    async def _process_chunked(self, profile, chunks: list[str],
-                               resume_from: int,
-                               accumulated_dims: dict[str, str],
-                               all_changes: set[str],
-                               summaries: list[str],
-                               file_hash: str) -> DistillResult:
-        """逐段 LLM 调用，增量合并。支持断点续传。"""
-        log.info("分段处理: %d chunks, 从第 %d 段开始", len(chunks), resume_from + 1)
-
-        failed_chunks: list[int] = []
-
-        for i in range(resume_from, len(chunks)):
-            chunk = chunks[i]
-            chunk_bytes = len(chunk.encode("utf-8"))
-            log.info("处理 chunk %d/%d, size=%d chars (%d bytes)",
-                     i + 1, len(chunks), len(chunk), chunk_bytes)
-
-            try:
-                new_dimensions, summary = await self._call_llm(profile, chunk)
-            except Exception as e:
-                log.warning("chunk %d/%d 处理失败（保存断点，跳过）: %s",
-                           i + 1, len(chunks), e)
-                failed_chunks.append(i + 1)
-                # 保存断点：下次上传同一文件从这里继续
-                self._save_progress(file_hash, i, accumulated_dims,
-                                    sorted(all_changes), summaries)
-                continue
-
-            # 本段有变化的维度
-            chunk_changes = []
-            for dim in DIMENSION_NAMES:
-                old_content = profile.dimensions.get(dim, "").strip()
-                new_content = new_dimensions.get(dim, "").strip()
-                if new_content and new_content != old_content:
-                    chunk_changes.append(dim)
-                    accumulated_dims[dim] = new_content
-                    profile.dimensions[dim] = new_content
-
-            all_changes.update(chunk_changes)
-
-            if summary:
-                summaries.append(f"[第{i+1}段] {summary}")
-
-            if chunk_changes:
-                log.info("chunk %d/%d 发现变化: %s", i + 1, len(chunks), chunk_changes)
-            else:
-                log.info("chunk %d/%d 无新发现", i + 1, len(chunks))
-
-        # 全部处理完 → 保存落地 + 删除断点
-        for dim in all_changes:
-            try:
-                self._loader.save_dimension(dim, accumulated_dims[dim])
-            except Exception as e:
-                log.error("保存维度 %s 失败: %s", dim, e)
-
-        self._delete_progress()
-
-        changes = sorted(all_changes)
-        success_count = len(chunks) - len(failed_chunks)
-        log.info("蒸馏完成 (chunked), %d/%d chunks 成功, changes=%s",
-                 success_count, len(chunks), changes)
-
-        if failed_chunks:
-            summaries.append(
-                f"[跳过: 第{','.join(map(str, failed_chunks))}段解析失败，"
-                f"下次上传同一文件可续传]"
-            )
-
-        return DistillResult(
-            changes=changes,
-            profile=self._merge_profile(profile, accumulated_dims),
-            summary=" | ".join(summaries) if summaries else "",
-        )
-
-    # ── 断点续传 ──────────────────────────────────────────
-
-    def _progress_path(self) -> Path | None:
-        """断点文件路径。"""
-        if self._progress_dir is None:
-            return None
-        return self._progress_dir / ".distill_progress.json"
-
-    def _load_progress(self) -> dict | None:
-        """加载上次未完成的蒸馏进度。"""
-        path = self._progress_path()
-        if path is None or not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text("utf-8"))
-        except Exception as e:
-            log.warning("读取断点文件失败: %s", e)
-            return None
-
-    def _save_progress(self, file_hash: str, resume_from: int,
-                       accumulated_dims: dict[str, str],
-                       all_changes: list[str],
-                       summaries: list[str]):
-        """保存蒸馏进度到磁盘。"""
-        path = self._progress_path()
-        if path is None:
-            return
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({
-                "file_hash": file_hash,
-                "resume_from": resume_from,
-                "accumulated_dims": accumulated_dims,
-                "all_changes": all_changes,
-                "summaries": summaries,
-            }, ensure_ascii=False, indent=2), "utf-8")
-            log.info("断点已保存: resume_from=%d", resume_from)
-        except Exception as e:
-            log.error("保存断点失败: %s", e)
-
-    def _delete_progress(self):
-        """蒸馏全部完成后删除断点文件。"""
-        path = self._progress_path()
-        if path and path.exists():
-            try:
-                path.unlink()
-                log.info("断点文件已删除（全部完成）")
-            except Exception as e:
-                log.warning("删除断点文件失败: %s", e)
 
     # ── LLM 调用 ──────────────────────────────────────────
 
     _DISTILL_TIMEOUT = 300
     _MAX_RETRIES = 2
 
-    async def _call_llm(self, profile, chat_text: str) -> tuple[dict[str, str], str]:
-        """调用 LLM 分析聊天记录，返回 (new_dimensions, summary)。含重试逻辑。"""
+    async def _call_llm_phase1(self, profile, chat_text: str) -> tuple[dict[str, str], str]:
+        """Phase 1: 调用 LLM 分析聊天记录，返回 (new_dimensions, summary)。含重试逻辑。"""
         messages = self._build_messages(profile, chat_text)
 
         last_error = None
@@ -332,54 +184,6 @@ class SoulDistiller:
             for dim in DIMENSION_NAMES
         }
 
-    # ── 文本切分 ──────────────────────────────────────────
-
-    def _split_chunks(self, text: str) -> list[str]:
-        """
-        在消息边界处切分文本，避免截断单条消息。
-        优先在双换行处切分，其次单换行，最后硬切分。
-        """
-        chunks: list[str] = []
-        remaining = text
-
-        text_bytes = len(text.encode("utf-8"))
-        avg_bytes_per_char = text_bytes / max(len(text), 1)
-        target_chars = int(self._chunk_size / avg_bytes_per_char)
-        min_split_chars = target_chars // 2
-
-        while len(remaining.encode("utf-8")) > self._chunk_size * 1.2:
-            probe = remaining[:target_chars]
-            split_at = None
-
-            # 策略 1: 双换行（消息边界）
-            last_double_nl = probe.rfind("\n\n")
-            if last_double_nl > min_split_chars:
-                split_at = last_double_nl + 2
-            else:
-                # 策略 2: 单换行
-                last_nl = probe.rfind("\n")
-                if last_nl > min_split_chars:
-                    split_at = last_nl + 1
-                else:
-                    # 策略 3: 扩展到 1.5x 范围找空格
-                    extended = remaining[:int(target_chars * 1.5)]
-                    last_space = extended.rfind(" ", min_split_chars)
-                    if last_space > 0:
-                        split_at = last_space + 1
-
-            if split_at is None:
-                split_at = target_chars
-
-            chunk = remaining[:split_at].strip()
-            if chunk:
-                chunks.append(chunk)
-            remaining = remaining[split_at:].strip()
-
-        if remaining.strip():
-            chunks.append(remaining.strip())
-
-        return chunks
-
     # ── Prompt 构建 ───────────────────────────────────────
 
     def _build_messages(self, profile, chat_text: str) -> list[dict]:
@@ -407,7 +211,7 @@ class SoulDistiller:
         return "\n\n".join(parts)
 
     def _parse_response(self, raw: str) -> tuple[dict[str, str], str]:
-        """解析 LLM 响应，提取维度内容和摘要。失败时尝试修复截断 JSON。"""
+        """解析 LLM 响应，提取维度内容和摘要。"""
         text = raw.strip()
         text = _strip_markdown_fence(text)
         data = self._try_parse_json(text)
@@ -444,57 +248,13 @@ class SoulDistiller:
             except json.JSONDecodeError:
                 continue
 
-        try:
-            return SoulDistiller._recover_partial_json(text)
-        except Exception:
-            pass
-
         raise RuntimeError(
             f"JSON 解析失败且无法自动修复, text_len={len(text)}, "
             f"tail={repr(text[-100:])}"
         )
 
-    @staticmethod
-    def _recover_partial_json(text: str) -> dict:
-        """从截断 JSON 中恢复已完成的维度内容。"""
-        last_complete = 0
-        for dim in DIMENSION_NAMES:
-            pattern = f'"{dim}":'
-            pos = text.rfind(pattern)
-            if pos > last_complete:
-                after = text[pos + len(pattern):].strip()
-                if after.startswith('"') and _has_closing_quote(after):
-                    last_complete = pos
-
-        if last_complete == 0:
-            raise RuntimeError("无法找到任何完整维度")
-
-        recovered = text[:last_complete].rstrip().rstrip(",")
-        recovered += '\n}\n}'
-        return json.loads(recovered)
-
 
 # ── helpers ────────────────────────────────────────────────
-
-def _hash_text(text: str) -> str:
-    """计算文本的短哈希，用于识别「同一文件」。"""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-
-
-def _has_closing_quote(text: str) -> bool:
-    """检查字符串中是否有匹配的闭合引号。"""
-    in_escape = False
-    for char in text[1:]:
-        if in_escape:
-            in_escape = False
-            continue
-        if char == '\\':
-            in_escape = True
-            continue
-        if char == '"':
-            return True
-    return False
-
 
 def _strip_markdown_fence(text: str) -> str:
     """去除 ```json ... ``` 包裹"""

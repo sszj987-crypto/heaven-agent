@@ -178,11 +178,20 @@ export interface DistillResult {
   changes: string[];
   profile: Record<string, string>;
   summary: string;
+  skill_card?: Record<string, string>;
 }
 
-export async function distillSoul(file: File): Promise<DistillResult> {
+export async function fetchSkill(): Promise<Record<string, string> | null> {
+  const res = await fetch(`${BASE}/soul/skill`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.skill_card || null;
+}
+
+export async function distillSoul(file: File, chatName?: string): Promise<DistillResult> {
   const formData = new FormData();
   formData.append("file", file);
+  if (chatName) formData.append("chat_name", chatName);
   const res = await fetch(`${BASE}/soul/distill`, {
     method: "POST",
     body: formData,

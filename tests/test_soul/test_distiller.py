@@ -11,7 +11,6 @@ from src.soul.distiller import (
     SoulDistiller,
     DistillResult,
     _strip_markdown_fence,
-    CHUNK_SIZE_BYTES,
     DIMENSION_LABELS,
 )
 from src.soul.loader import SoulLoader
@@ -224,23 +223,6 @@ class TestDistill:
             await distiller.distill("  ")
 
     @pytest.mark.asyncio
-    async def test_oversized_chat_is_chunked(self):
-        """大文件自动切分多段处理，不再报错"""
-        llm = _make_llm_client(_valid_llm_response({
-            "personality": "- 乐观", "hobbies": "- 读书"
-        }))
-        loader = _make_soul_loader()
-        distiller = SoulDistiller(llm, loader)
-
-        # 构造超过 chunk_size 的文本（每个中文字符 3 bytes → 需要 > chunk_size / 3 字符）
-        oversized = "你好啊！" * (CHUNK_SIZE_BYTES // 3 + 100)
-        result = await distiller.distill(oversized)
-
-        # 应该被切分为多段并成功处理
-        assert result.changes
-        assert llm.chat.call_count >= 2  # 至少调用了两次 LLM
-
-    @pytest.mark.asyncio
     async def test_llm_failure_raises(self):
         llm = _make_llm_client("{}")
         llm.chat.side_effect = RuntimeError("API error")
@@ -294,6 +276,34 @@ class TestDistill:
         assert result.summary == "从零构建了基本档案"
 
     @pytest.mark.asyncio
+    async def test_distill_with_chat_name(self):
+        """distill() 接受 chat_name 参数并传递给 ChatPreprocessor"""
+        llm = _make_llm_client(_valid_llm_response({
+            "personality": "- 乐观",
+        }))
+        loader = _make_soul_loader({"basic_info": "姓名: 赵六"})
+        distiller = SoulDistiller(llm, loader)
+
+        # chat_name 提供但聊天记录中发言人为"我"，应触发 fallback
+        chat = "用户: 哈哈你好搞笑\n逝者: 那可不~"
+        result = await distiller.distill(chat, chat_name="赵六")
+
+        assert "personality" in result.changes
+
+    @pytest.mark.asyncio
+    async def test_distill_without_chat_name(self):
+        """distill() 不传 chat_name 时使用 profile.name"""
+        llm = _make_llm_client(_valid_llm_response({
+            "personality": "- 乐观",
+        }))
+        loader = _make_soul_loader({"basic_info": "姓名: 赵六"})
+        distiller = SoulDistiller(llm, loader)
+
+        result = await distiller.distill("用户: 哈哈\n逝者: 嘿嘿")
+
+        assert "personality" in result.changes
+
+    @pytest.mark.asyncio
     async def test_parse_failure_raises(self):
         llm = _make_llm_client("这不是有效的 JSON 响应！")
         loader = _make_soul_loader({"basic_info": "姓名: test"})
@@ -301,65 +311,6 @@ class TestDistill:
 
         with pytest.raises(RuntimeError, match="解析失败"):
             await distiller.distill("测试聊天记录")
-
-    @pytest.mark.asyncio
-    async def test_chunked_processing_accumulates_changes(self):
-        """分段处理时，后一段的 LLM 能看到前一段的累积档案"""
-        call_count = [0]
-        def _sequential_response(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return _valid_llm_response({"personality": "- 乐观"}, "第一段: 发现性格")
-            else:
-                return _valid_llm_response({"hobbies": "- 读书"}, "第二段: 发现爱好")
-
-        llm = _make_llm_client("")
-        llm.chat = AsyncMock(side_effect=_sequential_response)
-
-        loader = _make_soul_loader()
-        distiller = SoulDistiller(llm, loader)
-
-        oversized = "你好！\n\n" * (CHUNK_SIZE_BYTES // 3 + 150)
-        result = await distiller.distill(oversized)
-
-        assert "personality" in result.changes
-        assert "hobbies" in result.changes
-        assert llm.chat.call_count >= 2
-        assert "第一段" in result.summary
-        assert "第二段" in result.summary
-
-
-# ── 测试 _split_chunks ──────────────────────────────────────
-
-class TestSplitChunks:
-    def test_small_text_returns_single_chunk(self):
-        loader = _make_soul_loader()
-        distiller = SoulDistiller(_make_llm_client("{}"), loader)
-        chunks = distiller._split_chunks("短文本")
-        assert len(chunks) == 1
-        assert chunks[0] == "短文本"
-
-    def test_large_text_splits_at_double_newline(self):
-        loader = _make_soul_loader()
-        distiller = SoulDistiller(_make_llm_client("{}"), loader)
-        # 构建约 2.5MB 的文本，确保触发切分（> 800KB * 1.2 ≈ 960KB）
-        msg = "哈" * 300  # ~900 bytes
-        big_text = (msg + "\n\n" + msg + "\n\n") * 1500
-        chunks = distiller._split_chunks(big_text)
-        assert len(chunks) >= 2
-        for chunk in chunks:
-            assert len(chunk) > 0
-
-    def test_no_double_newline_falls_back(self):
-        """不足 chunk_size * 1.2 的文本不触发切分"""
-        loader = _make_soul_loader()
-        distiller = SoulDistiller(_make_llm_client("{}"), loader)
-        # CHUNK_SIZE_BYTES / 3 字节 ≈ chunk_size，小于 chunk_size * 1.2 不触发切分
-        big_text = "哈" * (CHUNK_SIZE_BYTES // 3)
-        chunks = distiller._split_chunks(big_text)
-        assert len(chunks) == 1
-        assert chunks[0] == big_text
-
 
 # ── 测试 _save_changes ─────────────────────────────────────
 
