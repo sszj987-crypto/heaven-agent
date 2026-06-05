@@ -1,12 +1,10 @@
 from ..base import PipelineModule
 from ...context import PipelineContext
-from ...pipeline import Pipeline
 from ....config.logger import get_logger
 
 log = get_logger("soul_context")
 
 
-@Pipeline.register(slot="prellm", order=3)
 class SoulContextModule(PipelineModule):
     """加载 Soul Profile + 对话历史 → 构建完整 messages（最后执行）"""
 

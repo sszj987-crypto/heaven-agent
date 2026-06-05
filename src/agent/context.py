@@ -28,6 +28,7 @@ class PipelineContext:
     emotion: EmotionTag | None = None
     system_prompt: str = ""
     llm_messages: list[dict] = field(default_factory=list)
+    retrieved_memories: list[dict] = field(default_factory=list)  # MemoryRetrieveModule 产出
 
     # LLM 产出
     response: str = ""

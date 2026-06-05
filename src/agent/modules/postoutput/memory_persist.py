@@ -3,7 +3,6 @@ from datetime import date
 from pathlib import Path
 from ..base import PipelineModule
 from ...context import PipelineContext
-from ...pipeline import Pipeline
 from ....config.logger import get_logger
 
 log = get_logger("memory_persist")
@@ -12,7 +11,6 @@ log = get_logger("memory_persist")
 DEFAULT_MEMORY_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent / "memory" / "daily"
 
 
-@Pipeline.register(slot="postoutput", order=2)
 class MemoryPersistModule(PipelineModule):
     """
     记忆落盘模块。

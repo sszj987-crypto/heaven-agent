@@ -1,12 +1,10 @@
 from ..base import PipelineModule
 from ...context import PipelineContext, EmotionTag
-from ...pipeline import Pipeline
 from ....config.logger import get_logger
 
 log = get_logger("emotion_detect")
 
 
-@Pipeline.register(slot="prellm", order=2)
 class EmotionDetectModule(PipelineModule):
     """规则引擎情绪检测器（~5ms，不调用 LLM）"""
 

@@ -14,6 +14,8 @@ from ..voice.tts import TTSService
 from ..voice.tts_official import OfficialTTSService
 from ..soul.distiller import SoulDistiller
 from ..llm.client import LLMClient
+from ..memory.store import MemoryStore
+from ..memory.sync import MemorySynchronizer
 
 router = APIRouter()
 log = get_logger("api")
@@ -24,15 +26,23 @@ _tts: TTSService | OfficialTTSService | None = None
 _soul_loader: SoulLoader | None = None
 _distiller: SoulDistiller | None = None
 _llm_client: LLMClient | None = None
+_memory_store: MemoryStore | None = None
+_synchronizer: MemorySynchronizer | None = None
 
 
 def init_services():
     """应用启动时调用，初始化全局服务"""
-    global _agent_loop, _tts, _soul_loader, _distiller, _llm_client
+    global _agent_loop, _tts, _soul_loader, _distiller, _llm_client, _memory_store, _synchronizer
     log.info("正在初始化服务...")
     settings = Settings.get()
-    _llm_client = LLMManager.get_client(settings.llm)
-    _soul_loader = SoulLoader(settings.soul_path)
+
+    # 懒汉单例：首次调用时自动初始化
+    from ..llm.manager import get_llm_client
+    from ..soul.loader import get_soul_loader
+    from ..memory.store import get_memory_store
+    _llm_client = get_llm_client()
+    _soul_loader = get_soul_loader()
+    _memory_store = get_memory_store()
 
     # 根据配置选择 TTS 后端
     _backend = settings.tts_backend
@@ -45,10 +55,14 @@ def init_services():
 
     _distiller = SoulDistiller(_llm_client, _soul_loader)
 
+    # 初始化记忆同步器
+    _synchronizer = MemorySynchronizer(_memory_store, _soul_loader)
+    # 首次启动时同步 soul 维度到记忆库
+    if _memory_store.count == 0 and _soul_loader.load().has_content:
+        log.info("记忆库为空，执行首次同步...")
+        _synchronizer.sync_all()
+
     _agent_loop = AgentLoop(
-        llm_client=_llm_client,
-        soul_loader=_soul_loader,
-        circumstances=settings.circumstances,
         history_path=str(settings.data_dir / "conversation.json"),
     )
 
@@ -398,6 +412,14 @@ async def distill_soul(file: UploadFile = File(...), chat_name: str = Form("")):
 
     # 蒸馏后刷新 SoulContextModule 缓存
     _get_agent_loop().invalidate_soul_cache()
+
+    # 同步变化的维度到记忆库
+    if _synchronizer:
+        for dim in result.changes:
+            try:
+                _synchronizer.sync_dimension(dim)
+            except Exception as e:
+                log.warning("记忆同步失败, dim=%s: %s", dim, e)
 
     log.info("蒸馏完成, changes=%s, has_skill=%s",
              result.changes, bool(result.skill_card and result.skill_card.has_content))

@@ -1,12 +1,10 @@
 from ..base import PipelineModule
 from ...context import PipelineContext
-from ...pipeline import Pipeline
 from ....config.logger import get_logger
 
 log = get_logger("circumstances")
 
 
-@Pipeline.register(slot="prellm", order=1)
 class CircumstancesModule(PipelineModule):
     """加载当前场景描述"""
 

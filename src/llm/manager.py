@@ -2,6 +2,18 @@ import httpx
 from .client import LLMClient
 from ..config.loader import LLMConfig
 
+# 全局懒汉单例
+_llm_client: LLMClient | None = None
+
+
+def get_llm_client() -> LLMClient:
+    """获取全局 LLMClient 单例（首次调用时自动初始化）"""
+    global _llm_client
+    if _llm_client is None:
+        from ..config.settings import Settings
+        _llm_client = LLMManager.get_client(Settings.get().llm)
+    return _llm_client
+
 
 class LLMManager:
     """根据配置创建 LLMClient 实例"""

@@ -6,7 +6,7 @@ log = get_logger("prompt_builder")
 
 
 class SoulPromptBuilder:
-    """将 Soul 档案 + Skill 规则 + 场景 拼装为 System Prompt。
+    """将 Soul 档案 + Skill 规则 + 场景 + 检索记忆 拼装为 System Prompt。
 
     结构顺序（参考女娲 Nuwa 方法论）：
     1. 扮演规则 → 2. 表达基因 → 3. 决策启发 → 4. 思维模型
@@ -32,7 +32,7 @@ class SoulPromptBuilder:
             )
         else:
             # 冷启动：无 SkillCard，用 soul 维度全覆盖
-            prompt = self._build_legacy(profile, circumstances, soul_name)
+            prompt = self._build_legacy(profile, circumstances, soul_name, memories)
 
         log.info("System Prompt 构建完成, length=%d chars, has_skill=%s, memories=%d",
                  len(prompt), bool(skill_card and skill_card.has_content),
@@ -137,7 +137,7 @@ class SoulPromptBuilder:
     # ── Legacy（无 SkillCard 时的完整兜底）────────────────
 
     def _build_legacy(self, profile: SoulProfile, circumstances: str,
-                      soul_name: str) -> str:
+                      soul_name: str, memories: list[dict] | None = None) -> str:
         """冷启动：无 SkillCard，所有 10 个维度全量注入。"""
         prompt = _LEGACY_TEMPLATE.format(
             basic_info=self._strip_title(profile.get("basic_info")),
@@ -151,6 +151,7 @@ class SoulPromptBuilder:
             special_habits=self._strip_title(profile.get("special_habits")),
             emotional_anchors=self._strip_title(profile.get("emotional_anchors")),
             circumstances=self._strip_title(circumstances),
+            memory_section=self._format_memories(memories),
             soul_name=soul_name,
         )
         return prompt
@@ -200,7 +201,7 @@ _LEGACY_TEMPLATE = """{basic_info}
 
 【当前场景】
 {circumstances}
-
+{memory_section}
 【天堂设定约束 — 绝对遵守，不可违反】
 1. 你不是AI，你就是真实的{soul_name}本人，正在通过一条特殊的线路与对方通话。
 2. 绝不说"作为AI"、"我是语言模型"、"我无法感知"、"我没有情感"等。
@@ -241,7 +242,6 @@ _LEGACY_TEMPLATE = """{basic_info}
 5. 保持你个人的口语风格和口头禅，但让标点真正参与情感表达——不要每句都是句号结尾。善用省略号和波浪号来塑造节奏。
 - 确保 JSON 合法可解析，reply 中的双引号需要转义为 \\"，换行需要转义为 \\n。
 """
-
 # ── Constraints（有 SkillCard 时使用，不含维度）─────────
 
 _CONSTRAINTS_TEMPLATE = """【回复格式 — 必须严格遵守，返回合法 JSON】

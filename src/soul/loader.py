@@ -4,6 +4,18 @@ from .skill_card import SkillCard, SECTION_HEADERS
 
 _SKILL_FILE = "skill.md"
 
+# 全局懒汉单例
+_soul_loader = None  # type: SoulLoader | None
+
+
+def get_soul_loader():
+    """获取全局 SoulLoader 单例（首次调用时自动初始化）"""
+    global _soul_loader
+    if _soul_loader is None:
+        from ..config.settings import Settings
+        _soul_loader = SoulLoader(Settings.get().soul_path)
+    return _soul_loader
+
 
 class SoulLoader:
     """从配置的 soul 目录加载灵魂档案的 10 个维度 md 文件"""

@@ -9,6 +9,7 @@ docs
 # MLX model files (downloaded locally, ~1.3GB each)
 Fun-CosyVoice3-*/
 config/llm.json
+config/memory_db
 config/souls/test/
 config/souls/test copy
 config/conversation.json

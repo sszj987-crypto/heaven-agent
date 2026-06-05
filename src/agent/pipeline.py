@@ -1,36 +1,43 @@
 from .context import PipelineContext
-from .modules.base import PipelineModule
 from ..config.logger import get_logger
 
 log = get_logger("pipeline")
 
 
 class Pipeline:
-    """三段式 Pipeline，模块通过 @Pipeline.register(slot, order) 自动注册"""
+    """三段式 Pipeline，模块按注册表顺序执行。
 
-    _registry: dict[str, int, str] = {}  # (slot, order, name) → module_class
-
-    @classmethod
-    def register(cls, slot: str, order: int):
-        """装饰器：注册到 prellm / postllm / postoutput，按 order 排序执行"""
-        def decorator(mod_cls: type[PipelineModule]):
-            cls._registry[(slot, order, mod_cls.__name__)] = mod_cls
-            return mod_cls
-        return decorator
+    顺序由列表位置决定，不再需要 order 数字。
+    新增模块只需在对应 slot 列表中添加即可。
+    """
 
     def __init__(self):
-        self._prellm = self._collect("prellm")
-        self._postllm = self._collect("postllm")
-        self._postoutput = self._collect("postoutput")
+        # 延迟 import 避免循环依赖
+        from .modules.prellm.memory_retrieve import MemoryRetrieveModule
+        from .modules.prellm.circumstances import CircumstancesModule
+        from .modules.prellm.emotion_detect import EmotionDetectModule
+        from .modules.prellm.soul_context import SoulContextModule
+        from .modules.postllm.quality_check import QualityCheckModule
+        from .modules.postoutput.context_compress import ContextCompressModule
+        from .modules.postoutput.memory_persist import MemoryPersistModule
+        from .modules.postoutput.memory_extract import MemoryExtractModule
+
+        self._prellm = [
+            MemoryRetrieveModule(),
+            CircumstancesModule(),
+            EmotionDetectModule(),
+            SoulContextModule(),
+        ]
+        self._postllm = [
+            QualityCheckModule(),
+        ]
+        self._postoutput = [
+            ContextCompressModule(),
+            MemoryPersistModule(),
+            MemoryExtractModule(),
+        ]
         log.debug("Pipeline 初始化, prellm=%d, postllm=%d, postoutput=%d",
                   len(self._prellm), len(self._postllm), len(self._postoutput))
-
-    def _collect(self, slot: str) -> list[PipelineModule]:
-        items = sorted(
-            [(k, v) for k, v in self._registry.items() if k[0] == slot],
-            key=lambda x: x[0][1],
-        )
-        return [mod_cls() for _, mod_cls in items]
 
     async def run_prellm(self, ctx: PipelineContext) -> PipelineContext:
         log.info("── PreLLM 阶段开始（%d 个模块）──", len(self._prellm))
@@ -57,3 +64,30 @@ class Pipeline:
             ctx = await module.process(ctx)
         log.info("── PostOutput 阶段完成 ──")
         return ctx
+
+    @classmethod
+    def init_deps(cls, message_manager):
+        """一次性初始化所有 Pipeline 模块的依赖（在 AgentLoop 构造时调用）。"""
+        from ..config.settings import Settings
+        from ..llm.manager import get_llm_client
+        from ..soul.loader import get_soul_loader
+        from ..memory.store import get_memory_store
+        from .modules.prellm.circumstances import CircumstancesModule
+        from .modules.prellm.soul_context import SoulContextModule
+        from .modules.prellm.memory_retrieve import MemoryRetrieveModule
+        from .modules.postoutput.context_compress import ContextCompressModule
+        from .modules.postoutput.memory_persist import MemoryPersistModule
+        from .modules.postoutput.memory_extract import MemoryExtractModule
+
+        llm_client = get_llm_client()
+        soul_loader = get_soul_loader()
+        memory_store = get_memory_store()
+        circumstances = Settings.get().circumstances
+
+        CircumstancesModule.update(circumstances)
+        SoulContextModule.set_deps(soul_loader, message_manager)
+        ContextCompressModule.set_deps(llm_client, message_manager)
+        MemoryPersistModule.set_deps(message_manager)
+        if memory_store:
+            MemoryRetrieveModule.set_deps(memory_store)
+            MemoryExtractModule.set_deps(memory_store, llm_client, message_manager)

@@ -1,6 +1,5 @@
 from ..base import PipelineModule
 from ...context import PipelineContext
-from ...pipeline import Pipeline
 from ....config.logger import get_logger
 
 log = get_logger("compress")
@@ -13,7 +12,6 @@ SUMMARY_SYSTEM_PROMPT = (
 )
 
 
-@Pipeline.register(slot="postoutput", order=1)
 class ContextCompressModule(PipelineModule):
     """
     上下文压缩模块。

@@ -1,12 +1,10 @@
 from ..base import PipelineModule
 from ...context import PipelineContext
-from ...pipeline import Pipeline
 from ....config.logger import get_logger
 
 log = get_logger("quality_check")
 
 
-@Pipeline.register(slot="postllm", order=1)
 class QualityCheckModule(PipelineModule):
     """输出质量检查：检测回复文本和语音语气中的禁忌词/极端词，触发 LLM 重新生成"""
 

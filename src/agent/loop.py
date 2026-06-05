@@ -8,12 +8,8 @@ from .message import MessageManager
 from .modules import prellm as _prellm
 from .modules import postllm as _postllm
 from .modules import postoutput as _postoutput
-from .modules.prellm.circumstances import CircumstancesModule
 from .modules.prellm.soul_context import SoulContextModule
-from .modules.postoutput.context_compress import ContextCompressModule
-from .modules.postoutput.memory_persist import MemoryPersistModule
-from ..llm.client import LLMClient
-from ..soul.loader import SoulLoader
+from .modules.prellm.circumstances import CircumstancesModule
 from ..config.logger import get_logger
 
 log = get_logger("agent")
@@ -74,10 +70,11 @@ class AgentLoop:
 
     _MAX_REGENERATE = 2
 
-    def __init__(self, llm_client: LLMClient, soul_loader: SoulLoader, circumstances: str = "", history_path: str = ""):
-        self._llm = llm_client
+    def __init__(self, history_path: str = ""):
+        from ..llm.manager import get_llm_client
+
+        self._llm = get_llm_client()
         self._messages = MessageManager()
-        self._soul_loader = soul_loader
         self._history_path = history_path
 
         if history_path:
@@ -85,13 +82,8 @@ class AgentLoop:
             if loaded:
                 log.info("对话历史已从磁盘恢复, 轮数=%d", self._messages.conversation_turns)
 
-        CircumstancesModule.update(circumstances)
-
         self._pipeline = Pipeline()
-
-        SoulContextModule.set_deps(soul_loader, self._messages)
-        ContextCompressModule.set_deps(llm_client, self._messages)
-        MemoryPersistModule.set_deps(self._messages)
+        Pipeline.init_deps(self._messages)
 
     async def run(self, user_message: str) -> AsyncGenerator[str, None]:
         """
