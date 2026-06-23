@@ -1,6 +1,7 @@
 """记忆系统单元测试"""
 
 import tempfile
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pytest
@@ -107,6 +108,106 @@ class TestMemoryStore:
         assert stats["total"] == 3
         assert stats["by_dimension"]["hobbies"] == 2
         assert stats["by_dimension"]["life_experiences"] == 1
+
+    # ── 遗忘 / 时间衰减测试 ──────────────────────────
+
+    def test_add_includes_strength_metadata(self):
+        """add() 自动写入 strength / last_accessed_at / access_count"""
+        store = _make_store()
+        store.add("hobbies", "打游戏", {"name": "Dota"})
+
+        entries = store.get_by_dimension("hobbies")
+        assert len(entries) == 1
+        meta = entries[0]["metadata"]
+        assert meta["strength"] == 1.0
+        assert meta["last_accessed_at"]  # 非空 ISO 字符串
+        assert meta["access_count"] == 0
+        # 用户自定义 metadata 保留
+        assert meta["name"] == "Dota"
+
+    def test_search_result_has_strength_and_combined(self):
+        """search 结果携带 strength 和 combined 字段"""
+        store = _make_store()
+        store.add("hobbies", "打游戏")
+
+        results = store.search("游戏")
+        assert len(results) == 1
+        assert "strength" in results[0]
+        assert "combined" in results[0]
+        assert results[0]["strength"] > 0
+        assert results[0]["combined"] > 0
+
+    def test_recent_memory_ranks_higher_than_old(self):
+        """语义相同的两条记忆，最近访问的排前面"""
+        from datetime import timedelta
+
+        store = _make_store()
+        # 添加一条新记忆（strength=1.0, last_accessed_at=now）
+        store.add("hobbies", "喜欢打游戏，尤其是Dota和CS")
+
+        # 手动注入一条语义相似但很久前的记忆
+        old_time = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
+        store._collection.add(
+            ids=["mem_fake_old"],
+            embeddings=[store._embedder.encode_single("以前爱玩游戏")],
+            documents=["以前爱玩游戏"],
+            metadatas=[{
+                "dimension": "hobbies",
+                "strength": 1.0,
+                "last_accessed_at": old_time,
+                "access_count": 0,
+            }],
+        )
+
+        results = store.search("游戏")
+        # 新记忆（strength≈1.0）应排在旧记忆（已衰减）前面
+        assert len(results) >= 2
+        # 第一条应是新添加的（strength 更高）
+        assert "Dota" in results[0]["document"]
+
+    def test_search_boosts_retrieved_memories(self):
+        """search 后命中记忆的 access_count 和 last_accessed_at 会更新"""
+        store = _make_store()
+        store.add("hobbies", "打游戏，喜欢Dota")
+
+        # 首次检索
+        results = store.search("Dota")
+        assert len(results) == 1
+
+        # 再查一次，检查 metadata 是否更新
+        entries = store.get_by_dimension("hobbies")
+        assert len(entries) == 1
+        meta = entries[0]["metadata"]
+        # access_count 至少为 1（被 search 命中过）
+        assert meta["access_count"] >= 1
+
+    def test_backward_compatible_no_strength_field(self):
+        """没有 strength / last_accessed_at 的旧数据可正常检索"""
+        store = _make_store()
+        # 模拟旧格式数据（无 strength 等字段）
+        store._collection.add(
+            ids=["mem_old_style"],
+            embeddings=[store._embedder.encode_single("旧格式记忆")],
+            documents=["旧格式记忆"],
+            metadatas=[{"dimension": "hobbies"}],
+        )
+
+        results = store.search("旧格式")
+        assert len(results) == 1
+        assert results[0]["document"] == "旧格式记忆"
+        # 应有默认 strength≈1.0（无时间戳视为刚创建）
+        assert results[0]["strength"] > 0.9
+
+    def test_combined_score_equals_similarity_times_strength(self):
+        """combined = (1 - distance) × effective_strength"""
+        store = _make_store()
+        store.add("hobbies", "打游戏，Dota和CS")  # strength=1.0
+
+        results = store.search("打游戏")
+        assert len(results) == 1
+        similarity = 1.0 - results[0]["distance"]
+        expected = similarity * results[0]["strength"]
+        assert abs(results[0]["combined"] - expected) < 0.001
 
 
 # ── 测试解析器 ────────────────────────────────────────────

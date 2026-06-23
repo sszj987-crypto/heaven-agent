@@ -1,6 +1,7 @@
-"""ChromaDB 记忆存储：持久化向量索引 + 元数据过滤"""
+"""ChromaDB 记忆存储：持久化向量索引 + 元数据过滤 + 时间衰减"""
 
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import chromadb
@@ -35,7 +36,7 @@ class MemoryStore:
         results = store.search("你最近在做什么项目", top_k=5)
     """
 
-    def __init__(self, persist_dir: Path):
+    def __init__(self, persist_dir: Path, half_life_days: float = 30.0):
         self._dir = Path(persist_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(
@@ -47,17 +48,22 @@ class MemoryStore:
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
-        log.info("MemoryStore 初始化完成, dir=%s, count=%d",
-                 self._dir, self._collection.count())
+        self._half_life_days = half_life_days
+        log.info("MemoryStore 初始化完成, dir=%s, count=%d, half_life=%.0fd",
+                 self._dir, self._collection.count(), self._half_life_days)
 
     # ── CRUD ──────────────────────────────────────────────
 
     def add(self, dimension: str, content: str, metadata: dict | None = None) -> str:
-        """添加一条记忆。返回生成的 id。"""
+        """添加一条记忆，自动写入 strength / last_accessed_at / access_count。"""
         mem_id = f"mem_{uuid.uuid4().hex[:12]}"
         embedding = self._embedder.encode_single(content)
+        now = datetime.now(timezone.utc).isoformat()
         meta = {
             "dimension": dimension,
+            "strength": 1.0,
+            "last_accessed_at": now,
+            "access_count": 0,
             **(metadata or {}),
         }
         self._collection.add(
@@ -71,10 +77,16 @@ class MemoryStore:
 
     def search(self, query: str, top_k: int = 5,
                dimensions: list[str] | None = None) -> list[dict]:
-        """语义检索相关记忆。可过滤指定维度。"""
+        """语义检索 + 时间衰减重排序。
+
+        先按语义相似度拉取 fetch_k（top_k × 3）条候选，
+        再按 combined = similarity × effective_strength 降序重排，
+        取前 top_k 条，并强化命中记忆的 strength。
+        """
         if self._collection.count() == 0:
             return []
 
+        fetch_k = min(top_k * 3, self._collection.count())
         query_emb = self._embedder.encode_single(query)
         where = None
         if dimensions:
@@ -82,21 +94,92 @@ class MemoryStore:
 
         results = self._collection.query(
             query_embeddings=[query_emb],
-            n_results=min(top_k, self._collection.count()),
+            n_results=fetch_k,
             where=where,
             include=["documents", "metadatas", "distances"],
         )
 
-        entries: list[dict] = []
+        scored: list[dict] = []
         if results["ids"] and results["ids"][0]:
             for i in range(len(results["ids"][0])):
-                entries.append({
+                meta = results["metadatas"][0][i] or {}
+                distance = results["distances"][0][i]
+                similarity = 1.0 - distance  # cosine 距离 → 相似度
+                eff_strength = self._compute_effective_strength(meta)
+                combined = similarity * eff_strength
+                scored.append({
                     "id": results["ids"][0][i],
                     "document": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i],
-                    "distance": results["distances"][0][i],
+                    "metadata": meta,
+                    "distance": distance,
+                    "strength": eff_strength,
+                    "combined": combined,
                 })
+
+        # 按 combined 降序，取 top_k
+        scored.sort(key=lambda e: e["combined"], reverse=True)
+        entries = scored[:top_k]
+
+        # 强化被检索命中的记忆（strength boost）
+        if entries:
+            self._boost(entries)
+
         return entries
+
+    # ── 遗忘与衰减 ──────────────────────────────────────
+
+    def _compute_effective_strength(self, meta: dict) -> float:
+        """计算有效强度：base_strength × 时间衰减因子。
+
+        衰减公式: 0.5 ^ (days_since_last_access / half_life_days)
+        无时间戳的旧数据视为刚刚创建（向后兼容）。
+        """
+        strength = float(meta.get("strength", 1.0))
+        last_accessed = meta.get("last_accessed_at")
+        if last_accessed is None:
+            return strength
+
+        try:
+            last_dt = datetime.fromisoformat(str(last_accessed))
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            days = (now - last_dt).total_seconds() / 86400.0
+            if days < 0:
+                days = 0.0
+            decay = 0.5 ** (days / self._half_life_days)
+            return strength * decay
+        except (ValueError, TypeError, OverflowError):
+            return strength
+
+    def _boost(self, entries: list[dict]) -> None:
+        """强化被检索命中的记忆：strength += 0.15（上限 1.0），更新 last_accessed_at。"""
+        now = datetime.now(timezone.utc).isoformat()
+        ids = [e["id"] for e in entries]
+
+        # 获取当前元数据（ChromaDB update 是全量替换，需要保留其他字段）
+        result = self._collection.get(ids=ids, include=["metadatas"])
+        id_to_meta = {}
+        if result["ids"]:
+            for i, mem_id in enumerate(result["ids"]):
+                id_to_meta[mem_id] = result["metadatas"][i] if result["metadatas"] else {}
+
+        for entry in entries:
+            meta = id_to_meta.get(entry["id"], entry["metadata"])
+            eff_strength = entry.get("strength", self._compute_effective_strength(meta))
+            new_strength = min(1.0, eff_strength + 0.15)
+            access_count = int(meta.get("access_count", 0)) + 1
+            self._collection.update(
+                ids=[entry["id"]],
+                metadatas=[{
+                    **meta,
+                    "strength": new_strength,
+                    "last_accessed_at": now,
+                    "access_count": access_count,
+                }],
+            )
+
+        log.debug("记忆强化完成, boosted=%d", len(entries))
 
     def get_by_dimension(self, dimension: str) -> list[dict]:
         """获取某个维度的全部记忆。"""
