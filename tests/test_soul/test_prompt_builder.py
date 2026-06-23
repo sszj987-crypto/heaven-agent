@@ -8,13 +8,9 @@ class TestSoulPromptBuilder:
         self._profile = SoulProfile()
         self._profile.dimensions["basic_info"] = "# 基本信息\n## identity\n姓名: 王奶奶\n## description\n慈祥的退休教师。"
         self._profile.dimensions["personality"] = "# 性格\n## identity\n## description\n温和、善良、有耐心。"
-        self._profile.dimensions["linguistic_fingerprint"] = "# 语言特征\n## identity\n## description\n喜欢说'乖孩子'。"
-        self._profile.dimensions["values_beliefs"] = "# 价值观\n## identity\n## description\n家庭最重要。"
-        self._profile.dimensions["knowledge_domain"] = "# 知识领域\n## identity\n## description\n小学教育。"
         self._profile.dimensions["life_experiences"] = "# 人生经历\n## identity\n## description\n教了40年书。"
         self._profile.dimensions["relationships"] = "# 人际关系\n## identity\n## description\n有两个孙子。"
-        self._profile.dimensions["hobbies"] = "# 爱好\n## identity\n## description\n养花、做菜。"
-        self._profile.dimensions["special_habits"] = "# 习惯\n## identity\n## description\n早起散步。"
+        self._profile.dimensions["personal_traits"] = "# 个人特质\n## identity\n## description\n养花、做菜、早起散步。"
         self._profile.dimensions["emotional_anchors"] = "# 情感锚点\n## identity\n## description\n孙子的笑声。"
 
     def test_build_contains_name(self):
@@ -35,8 +31,7 @@ class TestSoulPromptBuilder:
         prompt = self._builder.build(self._profile, "")
         assert "慈祥的退休教师" in prompt
         assert "温和、善良" in prompt
-        assert "乖孩子" in prompt
-        assert "家庭最重要" in prompt
+        assert "养花、做菜" in prompt
 
     def test_strip_title_removes_h1(self):
         result = self._builder._strip_title("# 标题\n\n正文内容")

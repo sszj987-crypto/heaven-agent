@@ -12,9 +12,6 @@ from src.memory.sync import (
     _parse_life_experiences,
     _parse_emotional_anchors,
     _parse_relationships,
-    _parse_hobbies,
-    _parse_special_habits,
-    _parse_knowledge_domain,
     MEMORY_DIMENSIONS,
     SOUL_ONLY_DIMENSIONS,
 )
@@ -249,46 +246,17 @@ class TestParseRelationships:
         assert entries[0]["relation"] == "父亲"
 
 
-class TestParseHobbies:
-    def test_parses_hobbies(self):
-        text = "- 打游戏: Dota, CS\n- 写代码: 开发小程序"
-        entries = _parse_hobbies(text)
-        assert len(entries) == 2
-        assert entries[0]["name"] == "打游戏"
-
-
-class TestParseSpecialHabits:
-    def test_parses_habits(self):
-        text = "- 喜欢加哈哈结尾\n- 爱吃辣"
-        entries = _parse_special_habits(text)
-        assert len(entries) == 2
-        assert "哈哈" in entries[0]["content"]
-
-
-class TestParseKnowledgeDomain:
-    def test_parses_domains(self):
-        text = (
-            "擅长领域:\n"
-            "- 软件开发: 精通后端\n"
-            "不擅长领域:\n"
-            "- 投资理财: 经常亏损\n"
-        )
-        entries = _parse_knowledge_domain(text)
-        assert len(entries) == 2
-        assert entries[0]["category"] == "擅长领域"
-
-
 # ── 测试 MemorySynchronizer ─────────────────────────────
 
 class TestMemorySynchronizer:
     def test_sync_dimension(self):
         loader = _make_loader({
-            "hobbies": "# 爱好\n爱好列表:\n  - 打游戏: Dota\n  - 写代码: 小程序"
+            "personal_traits": "# 个人特质\n- 打游戏: Dota\n- 写代码: 小程序"
         })
         store = _make_store()
         syncer = MemorySynchronizer(store, loader)
 
-        count = syncer.sync_dimension("hobbies")
+        count = syncer.sync_dimension("personal_traits")
         assert count == 2
         assert store.count == 2
 
@@ -297,7 +265,7 @@ class TestMemorySynchronizer:
         store = _make_store()
         syncer = MemorySynchronizer(store, loader)
 
-        count = syncer.sync_dimension("hobbies")
+        count = syncer.sync_dimension("personal_traits")
         assert count == 0
 
     def test_sync_soul_only_dimension_skips(self):
@@ -310,7 +278,7 @@ class TestMemorySynchronizer:
 
     def test_sync_all(self):
         loader = _make_loader({
-            "hobbies": "# 爱好\n- 打游戏: Dota",
+            "personal_traits": "# 个人特质\n- 打游戏: Dota",
             "life_experiences": "# 经历\n- 1995年 出生",
             "personality": "# 性格\n- 乐观",  # soul only, should skip
         })
@@ -318,19 +286,18 @@ class TestMemorySynchronizer:
         syncer = MemorySynchronizer(store, loader)
 
         results = syncer.sync_all()
-        assert results["hobbies"] == 1
+        assert results["personal_traits"] == 1
         assert results["life_experiences"] == 1
 
     def test_summarize_dimension(self):
         loader = _make_loader({
-            "hobbies": "# 爱好\n- 打游戏: Dota\n- 写代码: 小程序\n- 健身"
+            "personal_traits": "# 个人特质\n- 打游戏: Dota\n- 写代码: 小程序\n- 健身"
         })
         store = _make_store()
         syncer = MemorySynchronizer(store, loader)
-        syncer.sync_dimension("hobbies")
+        syncer.sync_dimension("personal_traits")
 
-        summary = syncer.summarize_dimension("hobbies")
-        assert "爱好" in summary
+        summary = syncer.summarize_dimension("personal_traits")
         assert "打游戏" in summary
 
     def test_summarize_empty_dimension(self):
@@ -338,23 +305,24 @@ class TestMemorySynchronizer:
         store = _make_store()
         syncer = MemorySynchronizer(store, loader)
 
-        assert syncer.summarize_dimension("hobbies") == ""
+        assert syncer.summarize_dimension("personal_traits") == ""
 
 
 # ── 测试维度分类 ──────────────────────────────────────────
 
 class TestDimensionClassification:
     def test_memory_dimensions_count(self):
-        """6 个维度属于记忆系统"""
-        assert len(MEMORY_DIMENSIONS) == 6
+        """4 个维度属于记忆系统"""
+        assert len(MEMORY_DIMENSIONS) == 4
         assert "life_experiences" in MEMORY_DIMENSIONS
         assert "emotional_anchors" in MEMORY_DIMENSIONS
+        assert "personal_traits" in MEMORY_DIMENSIONS
 
     def test_soul_only_dimensions_count(self):
-        """4 个维度保留在 soul"""
-        assert len(SOUL_ONLY_DIMENSIONS) == 4
+        """2 个维度保留在 soul"""
+        assert len(SOUL_ONLY_DIMENSIONS) == 2
         assert "personality" in SOUL_ONLY_DIMENSIONS
-        assert "linguistic_fingerprint" in SOUL_ONLY_DIMENSIONS
+        assert "basic_info" in SOUL_ONLY_DIMENSIONS
 
     def test_no_overlap(self):
         assert MEMORY_DIMENSIONS.isdisjoint(SOUL_ONLY_DIMENSIONS)

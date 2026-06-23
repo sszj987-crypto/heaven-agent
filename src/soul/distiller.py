@@ -33,12 +33,8 @@ DIMENSION_LABELS: dict[str, str] = {
     "personality": "性格",
     "life_experiences": "人生经历",
     "relationships": "人际关系",
-    "hobbies": "爱好",
-    "special_habits": "特殊习惯",
-    "values_beliefs": "价值观与信仰",
+    "personal_traits": "个人特质",
     "emotional_anchors": "情感锚点",
-    "linguistic_fingerprint": "语言指纹",
-    "knowledge_domain": "知识领域",
 }
 
 
@@ -283,18 +279,14 @@ _DISTILL_SYSTEM_PROMPT = """你是一个灵魂档案分析师。你的任务是�
 - 从对方的发言中提取关于档案主人的描述（如对方说"你就是爱逞强"→提取为档案主人的性格特征）
 - 如果一段内容描述的是聊天对方的特征，忽略它
 
-## 灵魂档案的 10 个维度
+## 灵魂档案的 6 个维度
 
 1. **basic_info** — 基本信息：姓名、性别、年龄、籍贯、职业、生卒年份等。格式：`字段: 值`
 2. **personality** — 性格特征：性格标签（列表）、性格类型参考（如 MBTI）
-3. **linguistic_fingerprint** — 语言指纹：口头禅、语气词（呀、呢、啦、嘛、吧、哦）、句式风格（短句/长句、爱用逗号/省略号）、幽默风格、敏感话题
-4. **values_beliefs** — 价值观与信仰：人生哲学、金钱观、家庭观、教育观、事业观等
-5. **knowledge_domain** — 知识领域：擅长的事和专业领域、不擅长的领域
-6. **life_experiences** — 人生经历：按年份排列的重要事件（出生、求学、工作、婚姻、退休等）
-7. **relationships** — 人际关系：重要的人，格式为 `- 姓名: 关系, 称呼, 备注`
-8. **hobbies** — 爱好：爱好列表，格式为 `- 爱好名称: 备注说明`
-9. **special_habits** — 特殊习惯：行为特点、饮食习惯、穿衣风格、作息习惯等
-10. **emotional_anchors** — 情感锚点：重要的情感记忆，格式为 `- 事件简述: 情绪类型（如自豪/温暖/遗憾），描述`
+3. **life_experiences** — 人生经历：按年份排列的重要事件（出生、求学、工作、婚姻、退休等）
+4. **relationships** — 人际关系：重要的人，格式为 `- 姓名: 关系, 称呼, 备注`
+5. **personal_traits** — 个人特质：爱好、习惯、擅长的事。格式为列表 `- 描述`
+6. **emotional_anchors** — 情感锚点：重要的情感记忆，格式为 `- 事件简述: 情绪类型（如自豪/温暖/遗憾），描述`
 
 ## 合并规则（严格遵守）
 
@@ -331,7 +323,7 @@ _DISTILL_USER_TEMPLATE = """## 当前灵魂档案
 {{
   "dimensions": {{
     "personality": "更新后的完整 markdown...",
-    "linguistic_fingerprint": "更新后的完整 markdown...",
+    "personal_traits": "更新后的完整 markdown...",
     "basic_info": "UNCHANGED"
   }},
   "summary": "用一句话总结从聊天记录中发现的关键人格线索"

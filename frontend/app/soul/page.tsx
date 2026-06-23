@@ -13,12 +13,8 @@ const DIMENSION_LABELS: Record<string, string> = {
   personality: "性格",
   life_experiences: "人生经历",
   relationships: "人际关系",
-  hobbies: "爱好",
-  special_habits: "特殊习惯",
-  values_beliefs: "价值观与信仰",
+  personal_traits: "个人特质",
   emotional_anchors: "情感锚点",
-  linguistic_fingerprint: "语言指纹",
-  knowledge_domain: "知识领域",
 };
 
 const DIMENSIONS = Object.keys(DIMENSION_LABELS);

@@ -93,7 +93,7 @@ class TestBuildMessages:
 
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
-        # user message 应包含所有 10 个维度
+        # user message 应包含所有 6 个维度
         for dim in DIMENSION_NAMES:
             assert dim in messages[1]["content"]
 
@@ -123,13 +123,13 @@ class TestParseResponse:
         distiller = SoulDistiller(_make_llm_client("{}"), loader)
 
         response = _valid_llm_response(
-            {"personality": "- 乐观开朗", "linguistic_fingerprint": "- 口头禅: 哈哈"},
+            {"personality": "- 乐观开朗", "personal_traits": "- 口头禅: 哈哈"},
             "发现性格开朗"
         )
         dims, summary = distiller._parse_response(response)
 
         assert dims["personality"] == "- 乐观开朗"
-        assert dims["linguistic_fingerprint"] == "- 口头禅: 哈哈"
+        assert dims["personal_traits"] == "- 口头禅: 哈哈"
         assert summary == "发现性格开朗"
 
     def test_unchanged_dimensions_filtered_out(self):
@@ -137,12 +137,12 @@ class TestParseResponse:
         distiller = SoulDistiller(_make_llm_client("{}"), loader)
 
         response = _valid_llm_response(
-            {"personality": "UNCHANGED", "hobbies": "- 读书"}
+            {"personality": "UNCHANGED", "personal_traits": "- 读书"}
         )
         dims, _ = distiller._parse_response(response)
 
         assert "personality" not in dims
-        assert "hobbies" in dims
+        assert "personal_traits" in dims
 
     def test_empty_string_treated_as_unchanged(self):
         loader = _make_soul_loader()
@@ -323,11 +323,11 @@ class TestSaveChanges:
         changes = distiller._save_changes(profile, {
             "personality": "- 外向",  # 变化了
             "basic_info": "姓名: 张三",  # 没变
-            "hobbies": "- 读书",  # 新增
+            "personal_traits": "- 读书",  # 新增
         })
 
         assert "personality" in changes
-        assert "hobbies" in changes
+        assert "personal_traits" in changes
         assert "basic_info" not in changes
 
     def test_returns_empty_when_no_changes(self):

@@ -18,17 +18,13 @@ MEMORY_DIMENSIONS = {
     "life_experiences",
     "emotional_anchors",
     "relationships",
-    "hobbies",
-    "special_habits",
-    "knowledge_domain",
+    "personal_traits",
 }
 
 # 保留在 soul 的维度（稳定身份）
 SOUL_ONLY_DIMENSIONS = {
     "basic_info",
     "personality",
-    "linguistic_fingerprint",
-    "values_beliefs",
 }
 
 
@@ -107,23 +103,11 @@ class MemorySynchronizer:
                 line = doc.split("\n")[0] if "\n" in doc else doc[:80]
                 prefix = f"{name}: {rel}" if name else line
                 lines.append(f"  - {prefix}")
-        elif dimension == "hobbies":
-            lines.append("爱好列表:")
+        elif dimension == "personal_traits":
+            lines.append("个人特质:")
             for e in entries[:10]:
-                name = e["metadata"].get("name", "")
-                lines.append(f"  - {name}" if name else f"  - {e['document'].strip()[:60]}")
-        elif dimension == "special_habits":
-            lines.append("习惯列表:")
-            for e in entries[:8]:
                 doc = e["document"].strip()
                 line = doc.split("\n")[0] if "\n" in doc else doc[:80]
-                lines.append(f"  - {line}")
-        elif dimension == "knowledge_domain":
-            lines.append("擅长领域:")
-            for e in entries[:8]:
-                domain = e["metadata"].get("domain", "")
-                doc = e["document"].strip()
-                line = domain or (doc.split("\n")[0] if "\n" in doc else doc[:80])
                 lines.append(f"  - {line}")
 
         return "\n".join(lines)
@@ -135,9 +119,7 @@ _DIMENSION_HEADER_LABELS: dict[str, str] = {
     "life_experiences": "人生经历",
     "emotional_anchors": "情感锚点",
     "relationships": "人际关系",
-    "hobbies": "爱好",
-    "special_habits": "特殊习惯",
-    "knowledge_domain": "知识领域",
+    "personal_traits": "个人特质",
 }
 
 
@@ -227,58 +209,6 @@ def _parse_relationships(text: str) -> list[dict]:
     return entries
 
 
-def _parse_hobbies(text: str) -> list[dict]:
-    """解析爱好：`- 名称: 内容 / 备注: xxx`"""
-    entries = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line or not line.startswith("-"):
-            continue
-        content = line.lstrip("- ").strip()
-        if not content:
-            continue
-        # 处理 "名称: 写代码" 或 "写代码: 备注" 两种格式
-        if ":" in content:
-            key, _, val = content.partition(":")
-            key, val = key.strip(), val.strip()
-            if key == "名称":
-                name = val
-            else:
-                name = key
-        else:
-            name = content
-        entries.append({"content": content, "name": name})
-    return entries
-
-
-def _parse_special_habits(text: str) -> list[dict]:
-    """解析特殊习惯：`- 描述`"""
-    return _parse_generic_items(text)
-
-
-def _parse_knowledge_domain(text: str) -> list[dict]:
-    """解析知识领域：`擅长领域:` / `不擅长领域:` + `- 领域: 备注`"""
-    entries = []
-    category = ""
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("擅长领域") or line.startswith("不擅长领域"):
-            category = line.split(":", 1)[0].strip()
-            continue
-        if line.startswith("-"):
-            content = line.lstrip("- ").strip()
-            if content:
-                domain = content.split(":")[0].strip() if ":" in content else content
-                entries.append({
-                    "content": content,
-                    "domain": domain,
-                    "category": category,
-                })
-    return entries
-
-
 def _parse_generic_items(text: str) -> list[dict]:
     """通用列表解析：`- xxx`"""
     entries = []
@@ -300,7 +230,5 @@ _DIMENSION_PARSERS = {
     "life_experiences": _parse_life_experiences,
     "emotional_anchors": _parse_emotional_anchors,
     "relationships": _parse_relationships,
-    "hobbies": _parse_hobbies,
-    "special_habits": _parse_special_habits,
-    "knowledge_domain": _parse_knowledge_domain,
+    "personal_traits": _parse_generic_items,
 }

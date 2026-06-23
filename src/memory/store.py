@@ -32,7 +32,7 @@ class MemoryStore:
 
     用法:
         store = MemoryStore(data_dir / "memory_db")
-        store.add("hobbies", "离职后开发了微信小程序...", {"keywords": ["编程", "小程序"]})
+        store.add("personal_traits", "离职后开发了微信小程序...", {"keywords": ["编程", "小程序"]})
         results = store.search("你最近在做什么项目", top_k=5)
     """
 

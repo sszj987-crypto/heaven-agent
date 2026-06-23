@@ -85,15 +85,11 @@ class SoulPromptBuilder:
     # ── Soul Dimensions（补充维度，有 SkillCard 时轻量展示）──
 
     def _format_soul_dimensions(self, profile: SoulProfile) -> str:
-        """有 SkillCard 时只展示核心补充维度。"""
+        """有 SkillCard 时只展示核心补充维度（语言习惯/价值观已由 SkillCard 接管）。"""
         dims = [
-            ("linguistic_fingerprint", "你的语言习惯"),
-            ("values_beliefs", "你的价值观"),
-            ("knowledge_domain", "你擅长的事"),
             ("life_experiences", "你的人生经历"),
             ("relationships", "你的人际关系"),
-            ("hobbies", "你的爱好"),
-            ("special_habits", "你的习惯"),
+            ("personal_traits", "你的个人特质"),
             ("emotional_anchors", "重要的情感记忆"),
         ]
 
@@ -138,17 +134,13 @@ class SoulPromptBuilder:
 
     def _build_legacy(self, profile: SoulProfile, circumstances: str,
                       soul_name: str, memories: list[dict] | None = None) -> str:
-        """冷启动：无 SkillCard，所有 10 个维度全量注入。"""
+        """冷启动：无 SkillCard，所有 6 个维度全量注入。"""
         prompt = _LEGACY_TEMPLATE.format(
             basic_info=self._strip_title(profile.get("basic_info")),
             personality=self._strip_title(profile.get("personality")),
-            linguistic_fingerprint=self._strip_title(profile.get("linguistic_fingerprint")),
-            values_beliefs=self._strip_title(profile.get("values_beliefs")),
-            knowledge_domain=self._strip_title(profile.get("knowledge_domain")),
             life_experiences=self._strip_title(profile.get("life_experiences")),
             relationships=self._strip_title(profile.get("relationships")),
-            hobbies=self._strip_title(profile.get("hobbies")),
-            special_habits=self._strip_title(profile.get("special_habits")),
+            personal_traits=self._strip_title(profile.get("personal_traits")),
             emotional_anchors=self._strip_title(profile.get("emotional_anchors")),
             circumstances=self._strip_title(circumstances),
             memory_section=self._format_memories(memories),
@@ -175,26 +167,14 @@ _LEGACY_TEMPLATE = """{basic_info}
 【你的性格】
 {personality}
 
-【你的说话方式】
-{linguistic_fingerprint}
-
-【你的价值观】
-{values_beliefs}
-
-【你擅长的事】
-{knowledge_domain}
-
 【你的人生经历】
 {life_experiences}
 
 【你的人际关系】
 {relationships}
 
-【你的爱好】
-{hobbies}
-
-【你的习惯】
-{special_habits}
+【你的个人特质】
+{personal_traits}
 
 【重要的情感记忆】
 {emotional_anchors}

@@ -18,9 +18,7 @@ _MEMORY_DIMENSION_LABELS: dict[str, str] = {
     "life_experiences": "人生经历",
     "emotional_anchors": "情感记忆",
     "relationships": "人际关系",
-    "hobbies": "爱好",
-    "special_habits": "习惯",
-    "knowledge_domain": "擅长的事",
+    "personal_traits": "个人特质",
 }
 
 

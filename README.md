@@ -13,7 +13,7 @@
      │                                 │                      │
      ▼                                 ▼                      ▼
   Fish Speech                       LLM API               Soul 档案
-  (ASR + TTS)                   (OpenAI 兼容)         (10 维 MD 文件)
+  (ASR + TTS)                   (OpenAI 兼容)         (6 维 MD 文件)
 ```
 
 **Pipeline 处理流程：**
@@ -31,7 +31,7 @@ pip install -r requirements.txt
 # 2. 配置
 # 编辑 config/llm.json    — LLM API 地址和 Key
 # 编辑 config/voice.json  — Fish Speech 地址
-# 编辑 config/souls/demo/ — 灵魂档案（10 个维度 MD 文件）
+# 编辑 config/souls/demo/ — 灵魂档案（6 个维度 MD 文件）
 
 # 3. 启动
 ./scripts/start.sh
@@ -71,20 +71,18 @@ pip install -r requirements.txt
 
 ### 灵魂档案 (`config/souls/demo/`)
 
-10 个维度的 Markdown 文件构成完整数字人格：
+6 个维度的 Markdown 文件构成完整数字人格：
 
-| 维度 | 文件 | 说明 |
-|------|------|------|
-| 基本信息 | basic_info.md | 姓名/性别/年龄/职业 |
-| 性格 | personality.md | 性格标签/情绪表达 |
-| 人生经历 | life_experiences.md | 人生时间线 |
-| 人际关系 | relationships.md | 社会关系 |
-| 爱好 | hobbies.md | 兴趣与熟练度 |
-| 特殊习惯 | special_habits.md | 小习惯/口癖 |
-| 价值观 | values_beliefs.md | 人生观世界观 |
-| 情感锚点 | emotional_anchors.md | 重要情感记忆 |
-| 语言指纹 | linguistic_fingerprint.md | 说话风格/口头禅 |
-| 知识领域 | knowledge_domain.md | 专业与知识边界 |
+| 维度 | 文件 | 说明 | 存储 |
+|------|------|------|------|
+| 基本信息 | basic_info.md | 姓名/性别/年龄/职业 | Soul |
+| 性格 | personality.md | 性格标签/情绪表达 | Soul |
+| 人生经历 | life_experiences.md | 人生时间线 | 记忆库 |
+| 人际关系 | relationships.md | 社会关系 | 记忆库 |
+| 个人特质 | personal_traits.md | 爱好/习惯/擅长/不擅长 | 记忆库 |
+| 情感锚点 | emotional_anchors.md | 重要情感记忆 | 记忆库 |
+
+其中"记忆库"维度在对话中通过语义检索动态注入，支持间隔重复遗忘机制自然演化。
 
 ## 项目结构
 
@@ -96,7 +94,7 @@ voicefromheaven/
 │   ├── llm.json                    # LLM 配置
 │   ├── voice.json                  # 语音配置
 │   ├── circumstances.md            # 当前场景描述
-│   └── souls/demo/                 # 灵魂档案（10 MD）
+│   └── souls/demo/                 # 灵魂档案（6 MD）
 ├── src/
 │   ├── main.py                     # FastAPI 入口
 │   ├── config/                     # 配置模块（单例）

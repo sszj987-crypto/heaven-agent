@@ -18,7 +18,7 @@ def get_soul_loader():
 
 
 class SoulLoader:
-    """从配置的 soul 目录加载灵魂档案的 10 个维度 md 文件"""
+    """从配置的 soul 目录加载灵魂档案的 6 个维度 md 文件"""
 
     def __init__(self, soul_path: Path):
         self._soul_path = Path(soul_path)

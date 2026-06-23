@@ -43,6 +43,6 @@ class TestSoulProfile:
         assert not p.has_content
 
     def test_dimension_names_count(self):
-        assert len(DIMENSION_NAMES) == 10
+        assert len(DIMENSION_NAMES) == 6
         assert "basic_info" in DIMENSION_NAMES
-        assert "linguistic_fingerprint" in DIMENSION_NAMES
+        assert "personal_traits" in DIMENSION_NAMES

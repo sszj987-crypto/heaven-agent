@@ -1,23 +1,19 @@
 from dataclasses import dataclass, field
 
-# 维度文件名列表
+# 维度文件名列表（6 个：语言习惯和价值观已由 Skill Card 接管，爱好/习惯/擅长合并为个人特质）
 DIMENSION_NAMES = [
     "basic_info",
     "personality",
     "life_experiences",
     "relationships",
-    "hobbies",
-    "special_habits",
-    "values_beliefs",
+    "personal_traits",
     "emotional_anchors",
-    "linguistic_fingerprint",
-    "knowledge_domain",
 ]
 
 
 @dataclass
 class SoulProfile:
-    """灵魂档案，包含 10 个维度的 md 内容"""
+    """灵魂档案，包含 6 个维度的 md 内容"""
     dimensions: dict[str, str] = field(default_factory=dict)
 
     def get(self, dimension: str) -> str:
