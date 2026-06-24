@@ -94,16 +94,19 @@ class OfficialTTSService:
         return self._model
 
     def _transcribe_reference(self) -> str:
-        """使用 mlx_whisper 转写参考音频，返回转写文本"""
-        import mlx_whisper
+        """转写参考音频，返回转写文本（跨平台 ASR）"""
+        from .asr import create_asr_service
 
-        log.info("开始转写参考音频（mlx_whisper）...")
+        asr = create_asr_service()
+        log.info("开始转写参考音频（%s）...", type(asr).__name__)
         try:
-            result = mlx_whisper.transcribe(
-                str(self._ref_audio_path),
-                path_or_hf_repo="mlx-community/whisper-small-mlx",
-            )
-            text = result.get("text", "").strip()
+            import asyncio as _asyncio
+            try:
+                loop = _asyncio.get_running_loop()
+            except RuntimeError:
+                loop = _asyncio.new_event_loop()
+                _asyncio.set_event_loop(loop)
+            text = loop.run_until_complete(asr.transcribe(self._ref_audio_path.read_bytes()))
             log.info("参考音频转写完成: %s", text)
             return text
         except Exception as e:

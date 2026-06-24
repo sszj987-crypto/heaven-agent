@@ -24,10 +24,10 @@ app = FastAPI(title="VoiceFromHeaven", version="0.1.0")
 async def startup():
     init_services()
 
-# CORS 允许前端跨域
+# CORS 允许前端跨域，来源由 config/app.json 中的 frontend_origin 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3326"],
+    allow_origins=[settings.frontend_origin],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

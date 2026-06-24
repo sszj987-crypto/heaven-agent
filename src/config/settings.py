@@ -47,8 +47,8 @@ class Settings:
         return self._circumstances
 
     @property
-    def tts_backend(self) -> str:
-        return self._config.tts_backend
+    def frontend_origin(self) -> str:
+        return self._config.frontend_origin
 
     @property
     def log_level(self) -> str:
@@ -95,5 +95,5 @@ class Settings:
     def _save_app_json(self):
         """保存 app.json 中的运行时设置（soul_path, log_level 等）"""
         path = self._config_dir / "app.json"
-        data = {"soul_path": self._config.soul_path, "log_level": self._log_level}
+        data = {"soul_path": self._config.soul_path, "log_level": self._log_level, "frontend_origin": self._config.frontend_origin}
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False))

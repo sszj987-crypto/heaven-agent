@@ -11,14 +11,14 @@ _MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
 
 class MemoryEmbedder:
-    """文本向量化，单例延迟加载"""
+    """文本向量化，单例延迟加载。模型仅在首次 encode() 时加载。"""
 
     _instance: "MemoryEmbedder | None" = None
 
     def __init__(self):
-        log.info("加载 embedding 模型: %s", _MODEL_NAME)
-        self._model = SentenceTransformer(_MODEL_NAME)
-        log.info("embedding 模型加载完成, dim=%d", self._model.get_embedding_dimension())
+        self._model = None
+        self._model_name = _MODEL_NAME
+        log.debug("MemoryEmbedder 已创建，模型将在首次使用时加载")
 
     @classmethod
     def get(cls) -> "MemoryEmbedder":
@@ -26,12 +26,21 @@ class MemoryEmbedder:
             cls._instance = cls()
         return cls._instance
 
+    def _ensure_loaded(self):
+        if self._model is not None:
+            return
+        log.info("加载 embedding 模型: %s", self._model_name)
+        self._model = SentenceTransformer(self._model_name)
+        log.info("embedding 模型加载完成, dim=%d", self._model.get_embedding_dimension())
+
     @property
     def dim(self) -> int:
+        self._ensure_loaded()
         return self._model.get_embedding_dimension()
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         """将文本列表编码为向量列表"""
+        self._ensure_loaded()
         embeddings = self._model.encode(texts, normalize_embeddings=True)
         return embeddings.tolist()
 

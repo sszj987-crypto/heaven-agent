@@ -14,7 +14,7 @@ class LLMConfig:
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     soul_path: str = "config/souls/demo"
-    tts_backend: str = "mlx"
+    frontend_origin: str = "http://localhost:3326"
 
 
 class ConfigLoader:
@@ -35,6 +35,6 @@ class ConfigLoader:
         if app_path.exists():
             app_data = json.loads(app_path.read_text())
             config.soul_path = app_data.get("soul_path", config.soul_path)
-            config.tts_backend = app_data.get("tts_backend", config.tts_backend)
+            config.frontend_origin = app_data.get("frontend_origin", config.frontend_origin)
 
         return config

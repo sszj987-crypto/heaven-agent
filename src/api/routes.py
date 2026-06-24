@@ -9,7 +9,7 @@ from ..llm.manager import LLMManager
 from ..soul.loader import SoulLoader
 from ..agent.loop import AgentLoop
 from ..agent.context import TTSConfig
-from ..voice.asr import ASRService
+from ..voice.asr import create_asr_service
 from ..voice.tts import TTSService
 from ..voice.tts_official import OfficialTTSService
 from ..soul.distiller import SoulDistiller
@@ -44,14 +44,14 @@ def init_services():
     _soul_loader = get_soul_loader()
     _memory_store = get_memory_store()
 
-    # 根据配置选择 TTS 后端
-    _backend = settings.tts_backend
-    if _backend == "official":
-        log.info("使用官方 CosyVoice PyTorch 后端")
-        _tts = OfficialTTSService(settings.data_dir / "voice")
-    else:
-        log.info("使用 CosyVoice3 MLX 后端")
+    # 根据平台自动选择 TTS 后端
+    import sys
+    if sys.platform == "darwin":
+        log.info("使用 CosyVoice3 MLX 后端 (Apple Silicon)")
         _tts = TTSService(settings.data_dir / "voice")
+    else:
+        log.info("使用官方 CosyVoice PyTorch 后端 (CPU)")
+        _tts = OfficialTTSService(settings.data_dir / "voice")
 
     _distiller = SoulDistiller(_llm_client, _soul_loader)
 
@@ -189,7 +189,7 @@ async def chat_voice(audio: UploadFile = File(...)):
     audio_bytes = await audio.read()
     log.debug("语音数据大小: %d bytes", len(audio_bytes))
 
-    asr = ASRService()
+    asr = create_asr_service()
 
     # ASR: audio → text
     try:

@@ -30,13 +30,15 @@ Input → PreLLM ─────────────────────
 
 ## 快速开始
 
+### macOS
+
 ```bash
 # 1. 安装依赖
 pip install -r requirements.txt
 
 # 2. 配置
 # 编辑 config/llm.json     — LLM API 地址和 Key
-# 编辑 config/app.json     — soul_path 和 tts_backend (mlx / official)
+# 编辑 config/app.json     — 应用配置（前端地址、日志级别等）
 # 编辑 config/souls/test/  — 灵魂档案（6 个维度 MD 文件）
 
 # 3. 启动
@@ -47,6 +49,29 @@ pip install -r requirements.txt
 # 5. 停止
 ./scripts/stop.sh
 ```
+
+### Windows
+
+```powershell
+# 1. 安装依赖（需 Python 3.11+，Node 22+）
+pip install -r requirements.txt
+
+# 2. 安装 ffmpeg（下载后加入 PATH 或使用 winget）
+winget install ffmpeg
+
+# 3. 配置（同 macOS）
+# 编辑 config/llm.json
+
+# 4. 启动（Windows 自动使用 official TTS + faster-whisper ASR）
+scripts\start.bat
+
+# 5. 打开浏览器 → http://localhost:3326
+
+# 6. 停止
+scripts\stop.bat
+```
+
+> **平台说明**：TTS 和 ASR 后端根据系统自动选择 — macOS 使用 MLX（Apple Silicon GPU 加速），Windows 自动切换为 PyTorch CPU 后端。
 
 首次启动后在设置页面填入 LLM API Key 并测试连接，即可开始对话。
 
@@ -70,7 +95,7 @@ pip install -r requirements.txt
 {
   "soul_path": "config/souls/test",
   "log_level": "debug",
-  "tts_backend": "mlx"
+  "frontend_origin": "http://localhost:3326"
 }
 ```
 
@@ -78,16 +103,14 @@ pip install -r requirements.txt
 |------|------|
 | `soul_path` | 灵魂档案目录路径 |
 | `log_level` | 日志级别：`debug` / `error` |
-| `tts_backend` | TTS 后端：`mlx`（Apple Silicon 优化）或 `official`（PyTorch CPU） |
+| `frontend_origin` | 前端地址，用于 CORS 跨域配置 |
 
 ### 语音
 
-使用 **CosyVoice3** 零样本语音克隆，双后端可选：
+使用 **CosyVoice3** 零样本语音克隆，根据平台自动选择后端：
 
-- **MLX**（默认）：`Fun-CosyVoice3-0.5B-2512-8bit`，Apple Silicon 原生推理，需 `mlx-audio-plus`
-- **Official**：阿里官方 CosyVoice-300M PyTorch 后端，需 `modelscope` + `torchaudio`
-
-语音识别使用 **mlx-whisper**（`whisper-small-mlx`）。
+- **macOS**：CosyVoice3 MLX 8-bit（Apple Silicon GPU 加速），ASR 使用 mlx-whisper
+- **Windows**：CosyVoice-300M PyTorch（CPU 推理），ASR 使用 faster-whisper
 
 在上传参考音频后（设置 → 语音 → 上传），系统自动提取说话人特征用于语音克隆。
 
@@ -126,7 +149,7 @@ pip install -r requirements.txt
 
 ```
 voicefromheaven/
-├── scripts/                              # 启停脚本
+├── scripts/                              # 启停脚本（macOS: .sh / Windows: .bat）
 ├── config/                               # 配置文件
 │   ├── app.json                          # 应用配置
 │   ├── llm.json                          # LLM 配置
@@ -176,9 +199,9 @@ voicefromheaven/
 │   │   ├── embedder.py                   # 文本向量化
 │   │   └── sync.py                       # Soul ↔ 记忆同步
 │   └── voice/                            # 语音服务
-│       ├── asr.py                        # mlx-whisper ASR
-│       ├── tts.py                        # CosyVoice3 MLX TTS
-│       └── tts_official.py               # CosyVoice PyTorch TTS
+│       ├── asr.py                        # ASR（mlx-whisper / faster-whisper）
+│       ├── tts.py                        # TTS（CosyVoice3 MLX）
+│       └── tts_official.py               # TTS（CosyVoice PyTorch）
 ├── frontend/                             # Next.js 16 前端
 │   └── app/
 │       ├── page.tsx                      # 首页
@@ -224,13 +247,8 @@ voicefromheaven/
 
 - **后端**: Python 3.11+ / FastAPI / httpx / uvicorn
 - **前端**: Next.js 16 / TypeScript / Tailwind CSS
-- **语音**: mlx-whisper (ASR) + CosyVoice3 MLX / Official (TTS)
+- **语音**: mlx-whisper / faster-whisper (ASR) + CosyVoice3 MLX / PyTorch (TTS)
 - **向量存储**: ChromaDB + sentence-transformers
 - **LLM**: OpenAI 兼容 API（支持 streaming + JSON mode）
 - **音频处理**: ffmpeg + scipy + pyloudnorm
 - **测试**: pytest 239 用例 + pytest-asyncio
-
-## TODO
-
-- [ ] 容器化部署（Docker）
-- [ ] Windows 平台支持

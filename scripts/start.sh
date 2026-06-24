@@ -4,10 +4,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PID_FILE="$ROOT/.pids"
 LOG_DIR="$ROOT/log"
 
-# 创建日志目录
 mkdir -p "$LOG_DIR"
 
-# 检查是否已在运行（验证 PID 对应的进程是否真实存在）
+# 检查是否已在运行
 if [ -f "$PID_FILE" ]; then
     ALIVE=false
     while read -r pid; do
@@ -32,7 +31,20 @@ echo "===== 启动 VoiceFromHeaven ====="
 cd "$ROOT"
 .venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8326 >> "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
-echo "后端已启动 (PID: $BACKEND_PID, port: 8326, log: $LOG_DIR/backend.log)"
+echo "后端已启动 (PID: $BACKEND_PID, port: 8326)，等待就绪..."
+
+# 等待后端健康检查通过（最多 60 秒）
+for i in $(seq 1 60); do
+    if curl -s http://localhost:8326/ > /dev/null 2>&1; then
+        echo "后端就绪 (耗时 ${i}s)"
+        break
+    fi
+    if [ $i -eq 60 ]; then
+        echo "后端启动超时，请检查日志: $LOG_DIR/backend.log"
+        exit 1
+    fi
+    sleep 1
+done
 
 # 启动前端 (Next.js)
 cd "$ROOT/frontend"
@@ -40,7 +52,6 @@ npm run dev -- -p 3326 >> "$LOG_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo "前端已启动 (PID: $FRONTEND_PID, port: 3326, log: $LOG_DIR/frontend.log)"
 
-# 记录 PID（放在最后，确保前面的启动命令都已执行）
 echo "$BACKEND_PID" > "$PID_FILE"
 echo "$FRONTEND_PID" >> "$PID_FILE"
 
@@ -49,5 +60,4 @@ echo "===== VoiceFromHeaven 已启动 ====="
 echo "  前端: http://localhost:3326"
 echo "  后端: http://localhost:8326"
 echo "  日志: $LOG_DIR/"
-echo "  PID 文件: $PID_FILE"
 echo "  停止服务: ./scripts/stop.sh"

@@ -1,5 +1,5 @@
 {
   "soul_path": "config/souls/test",
   "log_level": "debug",
-  "tts_backend": "mlx"
+  "frontend_origin": "http://localhost:3326"
 }
