@@ -5,6 +5,7 @@ import json
 from ..base import PipelineModule
 from ...context import PipelineContext
 from ....config.logger import get_logger
+from ....soul.prompt_builder import VOICE_PROSODY_RULES
 
 log = get_logger("style_refine")
 
@@ -45,12 +46,16 @@ class StyleRefineModule(PipelineModule):
 
         try:
             prompt = self._build_prompt(draft, skill.expression_dna.strip())
-            raw = await self._llm.chat(
+            log.debug("润色 prompt (len=%d):\n%s", len(prompt), prompt)
+            chunks: list[str] = []
+            async for token in self._llm.stream(
                 [{"role": "user", "content": prompt}],
-                timeout=30,
-                max_tokens=512,
+                max_tokens=2048,
                 json_mode=True,
-            )
+            ):
+                chunks.append(token)
+            raw = "".join(chunks)
+            log.info("润色原始响应, len=%d, repr=%s", len(raw), repr(raw[:500]))
             polished = self._parse_result(raw)
             if polished and polished != draft:
                 ctx.response = polished
@@ -63,16 +68,20 @@ class StyleRefineModule(PipelineModule):
         return ctx
 
     def _build_prompt(self, draft: str, expression_rules: str) -> str:
-        return f"""你是文本风格润色助手。请将下面的回复按照表达规则润色，只调整表达方式，不改语义内容。
+        return f"""你是文本风格润色助手。将下面的回复按照表达规则润色。
 
-【表达规则】
+规则优先级：表达规则决定用词和句式，语音韵律规则决定标点和语气词，两者不冲突。
+
+【表达规则 — 决定用词和句式】
 {expression_rules}
 
+{VOICE_PROSODY_RULES}
+
+【输出格式】
+只输出一个 JSON 对象：{{"reply": "润色后的回复"}}
+
 【待润色回复】
-{draft}
-
-输出 JSON：{{"reply": "润色后的回复"}}"""
-
+{draft}"""
     def _parse_result(self, raw: str) -> str:
         text = raw.strip()
         if text.startswith("```"):

@@ -18,7 +18,6 @@ class Pipeline:
         from .modules.prellm.emotion_detect import EmotionDetectModule
         from .modules.prellm.soul_context import SoulContextModule
         from .modules.postllm.quality_check import QualityCheckModule
-        from .modules.postllm.style_refine import StyleRefineModule
         from .modules.postoutput.context_compress import ContextCompressModule
         from .modules.postoutput.memory_persist import MemoryPersistModule
         from .modules.postoutput.memory_extract import MemoryExtractModule
@@ -31,7 +30,6 @@ class Pipeline:
         ]
         self._postllm = [
             QualityCheckModule(),
-            StyleRefineModule(),
         ]
         self._postoutput = [
             ContextCompressModule(),
@@ -80,7 +78,6 @@ class Pipeline:
         from .modules.postoutput.context_compress import ContextCompressModule
         from .modules.postoutput.memory_persist import MemoryPersistModule
         from .modules.postoutput.memory_extract import MemoryExtractModule
-        from .modules.postllm.style_refine import StyleRefineModule
 
         llm_client = get_llm_client()
         soul_loader = get_soul_loader()
@@ -89,7 +86,6 @@ class Pipeline:
 
         CircumstancesModule.update(circumstances)
         SoulContextModule.set_deps(soul_loader, message_manager)
-        StyleRefineModule.set_deps(llm_client, soul_loader)
         ContextCompressModule.set_deps(llm_client, message_manager)
         MemoryPersistModule.set_deps(message_manager)
         if memory_store:
