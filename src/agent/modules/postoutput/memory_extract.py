@@ -1,7 +1,8 @@
-"""对话 → 记忆自动提取模块。
+"""人物信息提取模块：从对话中谨慎提取逝者新事实，更新 soul 维度文件。
 
-每 N 轮对话触发一次，后台异步调用 LLM 从最近对话中提取新事实，
-写入 ChromaDB 记忆库，实现记忆系统的读写闭环。
+与 ChatCompressModule 分工：
+- ChatCompressModule → 压缩对话摘要 → ChromaDB（检索用）
+- MemoryExtractModule → 提取人物信息 → soul MD 文件（身份更新）
 """
 
 import json
@@ -11,62 +12,57 @@ from ..base import PipelineModule
 from ...context import PipelineContext
 from ....config.logger import get_logger
 
-log = get_logger("memory_extract")
+log = get_logger("person_extract")
 
-# 记忆维度及中文标签（与 MemorySynchronizer.MEMORY_DIMENSIONS 保持一致）
-_MEMORY_DIMENSION_LABELS: dict[str, str] = {
-    "life_experiences": "人生经历",
-    "emotional_anchors": "情感记忆",
-    "relationships": "人际关系",
-    "personal_traits": "个人特质",
+# 可更新的 soul 维度
+_PERSON_DIMENSIONS: dict[str, str] = {
+    "life_experiences": "人生经历（重要事件、转折点、成就等）",
+    "emotional_anchors": "情感记忆（深刻的情感体验、与重要的人相关的回忆）",
+    "relationships": "人际关系（与家人、朋友、同事等的关系描述）",
+    "personal_traits": "个人特质（爱好、习惯、擅长/不擅长、性格特点）",
 }
 
 
 class MemoryExtractModule(PipelineModule):
-    """每 N 轮对话自动从对话历史中提取新事实，写入 ChromaDB。
+    """每 N 轮对话从对话中提取逝者新事实，更新 soul 维度文件。
 
-    依赖注入（由 AgentLoop 初始化）:
-        set_deps(store, llm_client, message_manager)
+    与旧版区别：
+        - 旧版写入 ChromaDB → 现在追加到 soul MD 文件
+        - 严格提示词：只提取明确的新信息，宁可漏过不要误加
+        - 提取后自动刷新 SoulContextModule 缓存
 
-    触发策略:
-        - 每 EXTRACT_EVERY_N_TURNS 轮对话触发一次
-        - 后台 asyncio.create_task 执行，不阻塞用户
-        - 防重入：上一次提取未完成时跳过
+    依赖注入:
+        set_deps(llm_client, message_manager, soul_loader)
     """
 
     EXTRACT_EVERY_N_TURNS = 10
 
-    _store = None          # MemoryStore
-    _llm = None            # LLMClient
-    _messages = None       # MessageManager
+    _llm = None          # LLMClient
+    _messages = None     # MessageManager
+    _loader = None       # SoulLoader
     _last_extracted_turn: int = 0
     _extracting: bool = False
 
     @classmethod
-    def set_deps(cls, store, llm_client, message_manager):
-        cls._store = store
+    def set_deps(cls, llm_client, message_manager, soul_loader):
         cls._llm = llm_client
         cls._messages = message_manager
+        cls._loader = soul_loader
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         turns = self._messages.conversation_turns
 
-        # 轮数阈值检查
         if turns - self._last_extracted_turn < self.EXTRACT_EVERY_N_TURNS:
-            log.debug("轮数未达阈值, turns=%d, last=%d, skip",
-                      turns, self._last_extracted_turn)
             return ctx
 
-        # 防重入
         if self._extracting:
-            log.debug("上一次提取未完成，跳过本轮")
             return ctx
 
         soul_name = ctx.soul_profile.name if ctx.soul_profile else "未知"
-        # 取最近 5 轮对话（10 条 user/assistant 消息）
-        recent = self._messages.conversation[-10:]
+        # 取最近 8 轮对话
+        recent = self._messages.conversation[-16:]
 
-        log.info("触发记忆提取, soul=%s, turns=%d, recent_msgs=%d",
+        log.info("触发人物信息提取, soul=%s, turns=%d, recent_msgs=%d",
                  soul_name, turns, len(recent))
 
         asyncio.create_task(self._do_extract(soul_name, recent, turns))
@@ -74,7 +70,6 @@ class MemoryExtractModule(PipelineModule):
 
     async def _do_extract(self, soul_name: str, recent: list[dict],
                           current_turn: int):
-        """后台执行：构建 prompt → 调用 LLM → 解析 → 写入 ChromaDB。"""
         self.__class__._extracting = True
         try:
             prompt = self._build_prompt(soul_name, recent)
@@ -88,30 +83,34 @@ class MemoryExtractModule(PipelineModule):
             )
 
             facts = self._parse_result(raw)
-            count = 0
+            updated_dims: set[str] = set()
             for fact in facts:
                 dim = fact.get("dimension", "")
                 content = fact.get("content", "")
-                if dim not in _MEMORY_DIMENSION_LABELS or not content:
+                if dim not in _PERSON_DIMENSIONS or not content:
                     continue
-                keywords = fact.get("keywords", [])
-                self._store.add(dim, content, {"keywords": keywords})
-                count += 1
+                self._append_to_dimension(dim, content)
+                updated_dims.add(dim)
 
-            self.__class__._last_extracted_turn = current_turn
-            log.info("记忆提取完成, soul=%s, turns=%d, extracted=%d",
-                     soul_name, current_turn, count)
+            if updated_dims:
+                self.__class__._last_extracted_turn = current_turn
+                log.info("人物信息提取完成, soul=%s, turns=%d, updated_dims=%s",
+                         soul_name, current_turn, updated_dims)
+                # 刷新 soul 缓存，让下次对话使用最新内容
+                from ..prellm.soul_context import SoulContextModule
+                SoulContextModule.invalidate()
+            else:
+                log.debug("人物信息提取: 无新的明确信息")
 
         except Exception as e:
-            log.error("记忆提取失败: %s", e)
+            log.error("人物信息提取失败: %s", e)
         finally:
             self.__class__._extracting = False
 
     def _build_prompt(self, soul_name: str, history: list[dict]) -> str:
-        """构建提取 prompt。"""
         dim_desc = "\n".join(
             f"- {key}（{label}）"
-            for key, label in _MEMORY_DIMENSION_LABELS.items()
+            for key, label in _PERSON_DIMENSIONS.items()
         )
 
         conv_lines = []
@@ -120,30 +119,40 @@ class MemoryExtractModule(PipelineModule):
             conv_lines.append(f"{label}: {msg['content']}")
         conv_text = "\n".join(conv_lines)
 
-        return f"""你是{soul_name}的记忆管家。请从以下对话中提取关于{soul_name}的**新事实**，归类到对应维度。
+        return f"""你是{soul_name}的记忆管家。请仔细阅读以下对话，提取{soul_name}在对话中**新透露的、之前未知的**个人信息。
 
-可用的记忆维度：
+可更新的维度：
 {dim_desc}
 
 对话内容：
 {conv_text}
 
-请提取对话中{soul_name}提到的关于自己的信息（新增的、之前未记录过的），输出为 JSON 数组：
+**重要：只提取明确的新信息。** 以下情况不提取：
+- 已经在之前对话中出现过的信息
+- 寒暄、问候、日常闲聊中的非信息性内容
+- 模糊、不确定、推测性的内容
+- 对方提到而不是逝者本人确认的信息
+- 不够具体、无法形成事实条目的一句话
+
+如果发现值得记录的新事实，输出 JSON 数组：
 [
-  {{"dimension": "维度key", "content": "简洁的事实描述", "keywords": ["关键词1", "关键词2"]}}
+  {{"dimension": "维度key", "content": "用逝者口吻描述的简洁事实，如'我曾在XX公司工作过3年'"}}
 ]
 
-要求：
-- 只提取{soul_name}相关的信息（不提取对方的信息）
-- 每条事实用一句话概括，清晰简洁
-- 如果对话中没有值得记录的新信息，返回空数组 []
-- 忽略日常寒暄、问候等无信息量的对话"""
+如果对话中没有值得记录的新信息，返回空数组 []。宁可漏过，不要误加。"""
+
+    def _append_to_dimension(self, dim: str, content: str):
+        """将新事实追加到 soul 维度文件末尾。"""
+        current = self._loader.load_dimension(dim)
+        # 在末尾追加新条目
+        new_entry = f"\n- {content}"
+        updated = (current.rstrip() if current else "") + new_entry + "\n"
+        self._loader.save_dimension(dim, updated)
+        log.info("维度已更新, dim=%s, entry=%s", dim, content[:80])
 
     def _parse_result(self, raw: str) -> list[dict]:
-        """解析 LLM 返回的 JSON。"""
         text = raw.strip()
 
-        # 去除可能的 markdown 代码块
         if text.startswith("```"):
             lines = text.split("\n")
             end_idx = None
@@ -160,7 +169,6 @@ class MemoryExtractModule(PipelineModule):
             data = json.loads(text)
             if isinstance(data, list):
                 return data
-            # 兼容 {"facts": [...]} / {"extractions": [...]} 等包裹
             if isinstance(data, dict):
                 for v in data.values():
                     if isinstance(v, list):

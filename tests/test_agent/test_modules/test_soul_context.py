@@ -47,22 +47,26 @@ class TestSoulContextModule:
         ctx1 = PipelineContext(user_message="hi")
         await self._module.process(ctx1)
 
-        # 第二次调用不应再 load
+        # 第二次：缓存命中，但 load() 仍被调用（设置 ctx.soul_profile）
         ctx2 = PipelineContext(user_message="hello")
         await self._module.process(ctx2)
 
-        self._mock_loader.load.assert_called_once()
+        # load() 每次都被调用，但 prompt_builder.build() 只调用一次
+        assert self._mock_loader.load.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_cache_hit_skips_loader(self):
+    async def test_cache_hit_sets_soul_profile(self):
+        """缓存命中时仍设置 ctx.soul_profile（供后续模块使用）。"""
         ctx1 = PipelineContext(user_message="first")
         await self._module.process(ctx1)
 
-        self._mock_loader.load.reset_mock()
         ctx2 = PipelineContext(user_message="second")
         await self._module.process(ctx2)
 
-        self._mock_loader.load.assert_not_called()
+        # load() 每次都被调用以确保 ctx.soul_profile 始终可用
+        assert self._mock_loader.load.call_count == 2
+        assert ctx2.soul_profile is not None
+        assert ctx2.soul_profile.name == "王奶奶"
 
     @pytest.mark.asyncio
     async def test_invalidate_clears_cache(self):

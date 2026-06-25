@@ -1,10 +1,10 @@
-"""MemoryExtractModule 单元测试"""
+"""MemoryExtractModule 单元测试（人物信息提取 → soul MD 更新）"""
 
 import pytest
 
 from src.agent.modules.postoutput.memory_extract import (
     MemoryExtractModule,
-    _MEMORY_DIMENSION_LABELS,
+    _PERSON_DIMENSIONS,
 )
 from src.agent.context import PipelineContext
 
@@ -17,24 +17,14 @@ class TestExtractTrigger:
         module = MemoryExtractModule()
         module._last_extracted_turn = 0
 
-        # 模拟 message_manager
         class FakeMessages:
-            conversation_turns = 5
+            conversation_turns = 10
             conversation = [
                 {"role": "user", "content": "你好"},
                 {"role": "assistant", "content": "你好呀"},
-                {"role": "user", "content": "今天怎么样"},
-                {"role": "assistant", "content": "挺好的"},
-                {"role": "user", "content": "你最近在做什么"},
-                {"role": "assistant", "content": "在学画画"},
-                {"role": "user", "content": "好玩吗"},
-                {"role": "assistant", "content": "很有意思"},
-                {"role": "user", "content": "我也想学"},
-                {"role": "assistant", "content": "可以试试"},
-            ]
+            ] * 8
 
         module._messages = FakeMessages()
-        module._store = None  # 不实际写入
 
         ctx = PipelineContext(user_message="可以试试")
         ctx.soul_profile = type("FakeProfile", (), {"name": "测试者"})()
@@ -68,8 +58,8 @@ class TestExtractTrigger:
         module._last_extracted_turn = 0
 
         class FakeMessages:
-            conversation_turns = 5
-            conversation = [{"role": "user", "content": "x"}] * 10
+            conversation_turns = 11
+            conversation = [{"role": "user", "content": "x"}] * 20
 
         module._messages = FakeMessages()
 
@@ -98,7 +88,7 @@ class TestPromptFormat:
             {"role": "assistant", "content": "我喜欢钓鱼"},
         ]
         prompt = module._build_prompt("小明", history)
-        for key, label in _MEMORY_DIMENSION_LABELS.items():
+        for key, label in _PERSON_DIMENSIONS.items():
             assert key in prompt
             assert label in prompt
 
@@ -116,7 +106,13 @@ class TestPromptFormat:
         module = MemoryExtractModule()
         prompt = module._build_prompt("小明", [])
         assert "小明" in prompt
-        # 空对话不影响 prompt 生成
+
+    def test_build_prompt_has_conservative_wording(self):
+        """提示词包含谨慎提取的要求。"""
+        module = MemoryExtractModule()
+        history = [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "你好"}]
+        prompt = module._build_prompt("小明", history)
+        assert "宁可漏过" in prompt
 
 
 class TestParseResult:
@@ -124,10 +120,10 @@ class TestParseResult:
 
     def test_parse_valid_array(self):
         module = MemoryExtractModule()
-        raw = '[{"dimension": "hobbies", "content": "喜欢钓鱼", "keywords": ["钓鱼"]}]'
+        raw = '[{"dimension": "personal_traits", "content": "喜欢钓鱼"}]'
         result = module._parse_result(raw)
         assert len(result) == 1
-        assert result[0]["dimension"] == "hobbies"
+        assert result[0]["dimension"] == "personal_traits"
         assert result[0]["content"] == "喜欢钓鱼"
 
     def test_parse_empty_array(self):
@@ -137,17 +133,17 @@ class TestParseResult:
 
     def test_parse_with_markdown_code_block(self):
         module = MemoryExtractModule()
-        raw = '```json\n[{"dimension": "hobbies", "content": "喜欢钓鱼"}]\n```'
+        raw = '```json\n[{"dimension": "personal_traits", "content": "喜欢钓鱼"}]\n```'
         result = module._parse_result(raw)
         assert len(result) == 1
         assert result[0]["content"] == "喜欢钓鱼"
 
     def test_parse_wrapped_in_object(self):
         module = MemoryExtractModule()
-        raw = '{"facts": [{"dimension": "hobbies", "content": "钓鱼"}]}'
+        raw = '{"facts": [{"dimension": "personal_traits", "content": "钓鱼"}]}'
         result = module._parse_result(raw)
         assert len(result) == 1
-        assert result[0]["dimension"] == "hobbies"
+        assert result[0]["dimension"] == "personal_traits"
 
     def test_parse_invalid_json_returns_empty(self):
         module = MemoryExtractModule()
@@ -158,21 +154,68 @@ class TestParseResult:
         module = MemoryExtractModule()
         raw = (
             '['
-            '{"dimension": "hobbies", "content": "钓鱼", "keywords": ["钓鱼"]},'
-            '{"dimension": "life_experiences", "content": "2020年去了西藏", "keywords": ["西藏", "旅行"]}'
+            '{"dimension": "personal_traits", "content": "钓鱼"},'
+            '{"dimension": "life_experiences", "content": "2020年去了西藏"}'
             ']'
         )
         result = module._parse_result(raw)
         assert len(result) == 2
 
 
-class TestDimensionLabels:
-    """测试记忆维度标签与 MemorySynchronizer 一致"""
+class TestPersonDimensions:
+    """测试人物维度定义"""
 
-    def test_labels_match_memory_dimensions(self):
+    def test_dimensions_match_memory_dimensions(self):
         from src.memory.sync import MEMORY_DIMENSIONS
-        assert set(_MEMORY_DIMENSION_LABELS.keys()) == MEMORY_DIMENSIONS
+        assert set(_PERSON_DIMENSIONS.keys()) == MEMORY_DIMENSIONS
 
-    def test_all_labels_are_non_empty(self):
-        for key, label in _MEMORY_DIMENSION_LABELS.items():
+    def test_all_dimensions_have_labels(self):
+        for key, label in _PERSON_DIMENSIONS.items():
             assert label, f"维度 {key} 缺少中文标签"
+
+
+class TestAppendDimension:
+    """测试追加维度内容到 soul 文件"""
+
+    def test_append_to_empty_dimension(self):
+        """空维度追加内容。"""
+        module = MemoryExtractModule()
+
+        class FakeLoader:
+            def __init__(self):
+                self.saved = {}
+
+            def load_dimension(self, dim):
+                return self.saved.get(dim, "")
+
+            def save_dimension(self, dim, content):
+                self.saved[dim] = content
+
+        loader = FakeLoader()
+        module._loader = loader
+
+        module._append_to_dimension("personal_traits", "喜欢钓鱼")
+        saved = loader.load_dimension("personal_traits")
+        assert saved == "\n- 喜欢钓鱼\n"
+
+    def test_append_to_existing_dimension(self):
+        """已有内容的维度追加。"""
+        module = MemoryExtractModule()
+
+        class FakeLoader:
+            def __init__(self):
+                self.saved = {"personal_traits": "# 个人特质\n\n- 喜欢画画\n"}
+
+            def load_dimension(self, dim):
+                return self.saved.get(dim, "")
+
+            def save_dimension(self, dim, content):
+                self.saved[dim] = content
+
+        loader = FakeLoader()
+        module._loader = loader
+
+        module._append_to_dimension("personal_traits", "擅长烹饪")
+        saved = loader.load_dimension("personal_traits")
+        assert "喜欢画画" in saved
+        assert "擅长烹饪" in saved

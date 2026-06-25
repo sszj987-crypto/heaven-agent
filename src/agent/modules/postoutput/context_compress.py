@@ -24,11 +24,13 @@ class ContextCompressModule(PipelineModule):
     _max_chars: int = DEFAULT_MAX_CHARS
     _llm = None
     _messages = None
+    _store = None
 
     @classmethod
-    def set_deps(cls, llm_client, message_manager):
+    def set_deps(cls, llm_client, message_manager, store=None):
         cls._llm = llm_client
         cls._messages = message_manager
+        cls._store = store
 
     @classmethod
     def configure(cls, max_turns: int = 20, max_chars: int = 20_000):
@@ -58,6 +60,9 @@ class ContextCompressModule(PipelineModule):
         half = len(conv) // 2
         old_conv = conv[:half]
 
+        # 只保留最近 4 条（2 轮），其余替换为摘要
+        keep_recent = min(4, len(conv) - half)
+
         # 构建摘要请求
         conversation_text = "\n".join(
             f"{'用户' if m['role'] == 'user' else '逝者'}: {m['content']}"
@@ -71,10 +76,19 @@ class ContextCompressModule(PipelineModule):
         try:
             summary = await self._llm.chat(summary_messages)
             self._messages.compress_conversation(
-                keep_recent=len(conv) - half,
+                keep_recent=keep_recent,
                 summary=summary,
             )
             log.info("上下文压缩完成, 摘要=%s...", summary[:50])
+
+            # 摘要同时存入 ChromaDB，供语义检索
+            if self._store:
+                self._store.add(
+                    "conversation",
+                    summary,
+                    {"type": "chat_summary"},
+                )
+                log.debug("压缩摘要已写入 ChromaDB")
         except Exception as e:
             log.error("上下文压缩失败: %s", e)
 

@@ -18,7 +18,7 @@ def init_logger(level: str = "error") -> logging.Logger:
     if not _logger.handlers:
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter(
-            "[%(asctime)s] %(levelname)-5s %(name)s | %(message)s",
+            "[%(asctime)s] %(levelname)-5s %(name)s %(filename)s:%(lineno)d | %(message)s",
             datefmt="%H:%M:%S",
         ))
         _logger.addHandler(handler)

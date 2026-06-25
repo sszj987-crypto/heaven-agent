@@ -90,4 +90,5 @@ class Pipeline:
         MemoryPersistModule.set_deps(message_manager)
         if memory_store:
             MemoryRetrieveModule.set_deps(memory_store)
-            MemoryExtractModule.set_deps(memory_store, llm_client, message_manager)
+            ContextCompressModule.set_deps(llm_client, message_manager, memory_store)
+            MemoryExtractModule.set_deps(llm_client, message_manager, soul_loader)

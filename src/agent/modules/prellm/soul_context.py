@@ -31,13 +31,15 @@ class SoulContextModule(PipelineModule):
         circumstances = ctx.circumstances or ""
         log.info("Soul Context 构建开始, circumstances=%s", circumstances[:60] if circumstances else "无")
 
+        # 加载 profile（后续模块依赖 ctx.soul_profile，需始终设置）
+        profile = self._loader.load()
+        ctx.soul_profile = profile
+
         # 构建 System Prompt（带缓存）
         if SoulContextModule._cached_prompt is not None:
             ctx.system_prompt = SoulContextModule._cached_prompt
             log.debug("使用缓存的 System Prompt, 长度=%d", len(ctx.system_prompt))
         else:
-            profile = self._loader.load()
-            ctx.soul_profile = profile
             skill_card = self._loader.load_skill() if self._loader.has_skill() else None
             memories = getattr(ctx, "retrieved_memories", None) or []
             ctx.system_prompt = self._prompt_builder.build(
