@@ -27,6 +27,7 @@ class LLMManager:
             base_url=config.base_url,
             api_key=config.api_key,
             model=config.model,
+            temperature=config.temperature,
         )
 
     @staticmethod

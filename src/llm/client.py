@@ -20,11 +20,13 @@ def _log_messages_debug(messages: list[dict]):
 class LLMClient:
     """OpenAI 兼容接口的 LLM 客户端，支持所有 OpenAI 兼容的 Provider"""
 
-    def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 120):
+    def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 120,
+                 temperature: float | None = None):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._model = model
         self._timeout = timeout
+        self._temperature = temperature
         self._http = httpx.AsyncClient(timeout=timeout)
         log.info("LLMClient 初始化, base_url=%s, model=%s, timeout=%ds",
                  self._base_url, self._model, self._timeout)
@@ -53,6 +55,8 @@ class LLMClient:
                 body["max_tokens"] = max_tokens
             if json_mode:
                 body["response_format"] = {"type": "json_object"}
+            if self._temperature is not None:
+                body["temperature"] = self._temperature
             response = await self._http.post(
                 url,
                 headers={
@@ -103,6 +107,8 @@ class LLMClient:
                 body["max_tokens"] = max_tokens
             if json_mode:
                 body["response_format"] = {"type": "json_object"}
+            if self._temperature is not None:
+                body["temperature"] = self._temperature
             async with self._http.stream(
                 "POST",
                 url,

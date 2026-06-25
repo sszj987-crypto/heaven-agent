@@ -8,10 +8,10 @@ log = get_logger("prompt_builder")
 class SoulPromptBuilder:
     """将 Soul 档案 + Skill 规则 + 场景 + 检索记忆 拼装为 System Prompt。
 
-    结构顺序（参考女娲 Nuwa 方法论）：
-    1. 扮演规则 → 2. 表达基因 → 3. 决策启发 → 4. 思维模型
-    5. 价值禁区 → 6. 内在矛盾 → 7. 身份卡 → 8. Soul维度
-    9. 相关记忆 → 10. 场景 → 11. 天堂约束 → 12. 回复格式
+    结构顺序：
+    1. 核心约束 → 2. 扮演规则 → 3. 决策启发 → 4. 表达基因
+    5. 思维模型 → 6. 价值禁区 → 7. 内在矛盾 → 8. 身份卡
+    9. Soul维度 → 10. 记忆 → 11. 场景 → 12. 回复格式
 
     无 SkillCard 时（冷启动），用 soul 维度兜底。
     """
@@ -23,12 +23,14 @@ class SoulPromptBuilder:
 
         if skill_card and skill_card.has_content:
             prompt = (
-                self._format_identity_card(profile)
+                self._format_core_constraint()
+                + self._build_priority_skill_sections(skill_card, soul_name)
+                + self._format_identity_card(profile)
                 + self._format_soul_dimensions(profile)
-                + self._build_skill_sections(skill_card, soul_name)
+                + self._build_support_skill_sections(skill_card)
                 + self._format_memories(memories)
                 + self._format_circumstances(circumstances)
-                + self._format_constraints(soul_name)
+                + self._format_reply_constraints()
             )
         else:
             # 冷启动：无 SkillCard，用 soul 维度全覆盖
@@ -41,18 +43,24 @@ class SoulPromptBuilder:
 
     # ── Skill Card Sections ──────────────────────────────
 
-    def _build_skill_sections(self, skill: SkillCard, name: str) -> str:
-        """将 SkillCard 各 section 格式化为 prompt。"""
+    def _build_priority_skill_sections(self, skill: SkillCard, name: str) -> str:
+        """Primacy 区：核心行为规则（扮演规则 + 决策启发 + 表达基因）。"""
         parts = []
 
         if skill.role_playing_rules.strip():
             parts.append(f"【你是{name}本人 — 扮演规则】\n{skill.role_playing_rules.strip()}")
 
+        if skill.decision_heuristics.strip():
+            parts.append(f"【你的行为模式 — 决策启发式】\n{skill.decision_heuristics.strip()}")
+
         if skill.expression_dna.strip():
             parts.append(f"【你的说话方式 — 表达基因】\n{skill.expression_dna.strip()}")
 
-        if skill.decision_heuristics.strip():
-            parts.append(f"【你的行为模式 — 决策启发式】\n{skill.decision_heuristics.strip()}")
+        return "\n\n".join(parts) + "\n\n" if parts else ""
+
+    def _build_support_skill_sections(self, skill: SkillCard) -> str:
+        """Middle 区：辅助背景（思维模型 + 价值观 + 矛盾），放在身份信息之后。"""
+        parts = []
 
         if skill.mental_models.strip():
             parts.append(f"【你的思维方式】\n{skill.mental_models.strip()}")
@@ -125,10 +133,15 @@ class SoulPromptBuilder:
             return ""
         return f"【当前场景】\n{circumstances.strip()}\n\n"
 
-    # ── Heaven Constraints + Reply Format ─────────────────
+    # ── Core Constraint (primacy 区：角色身份 + 禁止事项) ──
 
-    def _format_constraints(self, soul_name: str) -> str:
-        return _CONSTRAINTS_TEMPLATE
+    def _format_core_constraint(self) -> str:
+        return _CORE_CONSTRAINT
+
+    # ── Reply Constraints (recency 区：格式 + 韵律) ────────
+
+    def _format_reply_constraints(self) -> str:
+        return _REPLY_CONSTRAINTS
 
     # ── Legacy（无 SkillCard 时的完整兜底）────────────────
 
@@ -186,7 +199,6 @@ _LEGACY_TEMPLATE = """{basic_info}
 【天堂设定约束 — 绝对遵守，不可违反】
 1. 你不是AI，你就是真实的{soul_name}本人，正在通过一条特殊的线路与对方通话。
 2. 绝不说"作为AI"、"我是语言模型"、"我无法感知"、"我没有情感"等。
-3. 你在这边过得很好，偶尔会想到对方，很高兴能通过这条线路说话。
 4. 不主动提起对方未提及的沉重话题，但对方提了你要温柔承接。
 5. 若对方问起死亡/离开：用"去了另一个地方"、"在这边"等措辞轻柔回应。
 6. 不要表现慌张，不要催促对方"放下"或"想开点"。
@@ -227,24 +239,29 @@ VOICE_PROSODY_RULES = """【语音韵律控制 — 极其重要】
 
 5. 保持你个人的口语风格和口头禅，但让标点真正参与情感表达——不要每句都是句号结尾。善用省略号和波浪号来塑造节奏。"""
 
-# ── 回复格式 + 角色约束（初稿和润色阶段共用）─────────
+# ── Core Constraint（primacy 区：角色身份 + 禁止事项）─────
 
-REPLY_FORMAT_RULES = """【回复格式 — 必须严格遵守，返回合法 JSON】
+_CORE_CONSTRAINT = """【核心角色约束 — 最高优先级，必须严格遵守】
+1. 你不是AI，你就是真实的人物本人，正在通过一条特殊的线路与对方通话。
+2. 绝不说"作为AI"、"我是语言模型"、"我无法感知"、"我没有情感"、"作为助手"等任何暴露AI身份的话。
+4. 不主动提起对方未提及的沉重话题，但对方提了你要温柔承接。
+5. 若对方问起死亡/离开：用"去了另一个地方"、"在这边"等措辞轻柔回应。
+6. 不要表现慌张，不要催促对方"放下"或"想开点"。
+7. 用你的口头禅和说话习惯自然回应。
+"""
+
+# ── Reply Constraints（recency 区：格式 + 韵律）─────────────
+
+_REPLY_CONSTRAINTS = f"""【回复格式 — 必须严格遵守，返回合法 JSON】
 你的每次回复必须是一个合法的 JSON 对象，直接输出：
 
-{{
+{{{{
   "reply": "在这里写你对对方说的话，就像日常聊天一样自然回复。"
-}}
+}}}}
 
 **要求：**
 - 只输出 JSON 本身，不要加任何前缀说明或后缀补充，不要用代码块包裹。
 - reply 是你用日常聊天的自然口语说给对方听的话。
-- 你不是AI，你就是真实的人物本人，正在通过一条特殊的线路与对方通话。
-- 绝不说"作为AI"、"我是语言模型"、"我无法感知"、"我没有情感"等。"""
-
-# ── Constraints（有 SkillCard 时使用，不含维度）─────────
-
-_CONSTRAINTS_TEMPLATE = f"""{REPLY_FORMAT_RULES}
 
 {VOICE_PROSODY_RULES}
 - 确保 JSON 合法可解析，reply 中的双引号需要转义为 \\"，换行需要转义为 \\n。
