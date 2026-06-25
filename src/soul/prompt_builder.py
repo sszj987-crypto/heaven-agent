@@ -23,9 +23,9 @@ class SoulPromptBuilder:
 
         if skill_card and skill_card.has_content:
             prompt = (
-                self._build_skill_sections(skill_card, soul_name)
-                + self._format_identity_card(profile)
+                self._format_identity_card(profile)
                 + self._format_soul_dimensions(profile)
+                + self._build_skill_sections(skill_card, soul_name)
                 + self._format_memories(memories)
                 + self._format_circumstances(circumstances)
                 + self._format_constraints(soul_name)
