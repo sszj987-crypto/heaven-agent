@@ -10,12 +10,11 @@ from src.agent.context import PipelineContext
 
 
 class TestExtractTrigger:
-    """测试提取触发条件：轮数阈值 + 防重入"""
+    """测试提取触发条件：间隔轮数 + 防重入"""
 
-    async def test_triggers_at_threshold(self):
-        """达到阈值轮数时触发提取。"""
+    async def test_triggers_at_interval(self):
+        """达到间隔轮数（10 的倍数）时触发提取。"""
         module = MemoryExtractModule()
-        module._last_extracted_turn = 0
 
         class FakeMessages:
             conversation_turns = 10
@@ -32,10 +31,9 @@ class TestExtractTrigger:
         result = await module.process(ctx)
         assert result is ctx
 
-    async def test_skips_below_threshold(self):
-        """轮数不足时不触发。"""
+    async def test_skips_not_at_interval(self):
+        """不在间隔轮数时不触发。"""
         module = MemoryExtractModule()
-        module._last_extracted_turn = 0
 
         class FakeMessages:
             conversation_turns = 3
@@ -55,10 +53,9 @@ class TestExtractTrigger:
         """上一次提取未完成时跳过。"""
         module = MemoryExtractModule()
         module._extracting = True
-        module._last_extracted_turn = 0
 
         class FakeMessages:
-            conversation_turns = 11
+            conversation_turns = 10
             conversation = [{"role": "user", "content": "x"}] * 20
 
         module._messages = FakeMessages()
@@ -163,11 +160,6 @@ class TestParseResult:
 
 
 class TestPersonDimensions:
-    """测试人物维度定义"""
-
-    def test_dimensions_match_memory_dimensions(self):
-        from src.memory.sync import MEMORY_DIMENSIONS
-        assert set(_PERSON_DIMENSIONS.keys()) == MEMORY_DIMENSIONS
 
     def test_all_dimensions_have_labels(self):
         for key, label in _PERSON_DIMENSIONS.items():

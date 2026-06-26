@@ -13,9 +13,19 @@ class LLMConfig:
 
 @dataclass
 class AppConfig:
+    # === 全局 ===
     llm: LLMConfig = field(default_factory=LLMConfig)
     soul_path: str = "config/souls/demo"
     frontend_origin: str = "http://localhost:3326"
+
+    # === Pipeline 模块 ===
+    crunch_interval: int = 10           # 上下文压缩 & 人物信息提取的触发间隔（轮）
+    compress_keep_recent: int = 6       # 压缩时保留的最近消息条数
+    max_conversation_turns: int = 20    # 对话轮数上限，超出自动截断旧消息
+    max_regenerate: int = 2             # 质量检查不合格时的最大重生成次数
+
+    # === 蒸馏模块 ===
+    distill_max_retries: int = 2        # 蒸馏 LLM 调用失败时的最大重试次数
 
 
 class ConfigLoader:
@@ -37,5 +47,14 @@ class ConfigLoader:
             app_data = json.loads(app_path.read_text())
             config.soul_path = app_data.get("soul_path", config.soul_path)
             config.frontend_origin = app_data.get("frontend_origin", config.frontend_origin)
+
+            pipeline = app_data.get("pipeline", {})
+            config.crunch_interval = pipeline.get("crunch_interval", config.crunch_interval)
+            config.compress_keep_recent = pipeline.get("compress_keep_recent", config.compress_keep_recent)
+            config.max_conversation_turns = pipeline.get("max_conversation_turns", config.max_conversation_turns)
+            config.max_regenerate = pipeline.get("max_regenerate", config.max_regenerate)
+
+            distill = app_data.get("distill", {})
+            config.distill_max_retries = distill.get("max_retries", config.distill_max_retries)
 
         return config

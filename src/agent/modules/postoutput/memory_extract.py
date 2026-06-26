@@ -24,7 +24,7 @@ _PERSON_DIMENSIONS: dict[str, str] = {
 
 
 class MemoryExtractModule(PipelineModule):
-    """每 N 轮对话从对话中提取逝者新事实，更新 soul 维度文件。
+    """每 crunch_interval 轮对话从对话中提取逝者新事实，更新 soul 维度文件。
 
     与旧版区别：
         - 旧版写入 ChromaDB → 现在追加到 soul MD 文件
@@ -35,13 +35,11 @@ class MemoryExtractModule(PipelineModule):
         set_deps(llm_client, message_manager, soul_loader)
     """
 
-    EXTRACT_EVERY_N_TURNS = 10
-
     _llm = None          # LLMClient
     _messages = None     # MessageManager
     _loader = None       # SoulLoader
-    _last_extracted_turn: int = 0
     _extracting: bool = False
+    _crunch_interval: int = 10
 
     @classmethod
     def set_deps(cls, llm_client, message_manager, soul_loader):
@@ -49,13 +47,21 @@ class MemoryExtractModule(PipelineModule):
         cls._messages = message_manager
         cls._loader = soul_loader
 
+    @classmethod
+    def configure(cls, crunch_interval: int = 10):
+        cls._crunch_interval = crunch_interval
+
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         turns = self._messages.conversation_turns
+        interval = self._crunch_interval
 
-        if turns - self._last_extracted_turn < self.EXTRACT_EVERY_N_TURNS:
+        if turns <= 0 or turns % interval != 0:
+            log.debug("人物信息提取跳过: turns=%d, 间隔=%d, 还需%d轮触发",
+                      turns, interval, interval - (turns % interval))
             return ctx
 
         if self._extracting:
+            log.debug("人物信息提取跳过: 上一轮提取仍在进行中")
             return ctx
 
         soul_name = ctx.soul_profile.name if ctx.soul_profile else "未知"
@@ -65,11 +71,10 @@ class MemoryExtractModule(PipelineModule):
         log.info("触发人物信息提取, soul=%s, turns=%d, recent_msgs=%d",
                  soul_name, turns, len(recent))
 
-        asyncio.create_task(self._do_extract(soul_name, recent, turns))
+        asyncio.create_task(self._do_extract(soul_name, recent))
         return ctx
 
-    async def _do_extract(self, soul_name: str, recent: list[dict],
-                          current_turn: int):
+    async def _do_extract(self, soul_name: str, recent: list[dict]):
         self.__class__._extracting = True
         try:
             prompt = self._build_prompt(soul_name, recent)
@@ -93,9 +98,8 @@ class MemoryExtractModule(PipelineModule):
                 updated_dims.add(dim)
 
             if updated_dims:
-                self.__class__._last_extracted_turn = current_turn
                 log.info("人物信息提取完成, soul=%s, turns=%d, updated_dims=%s",
-                         soul_name, current_turn, updated_dims)
+                         soul_name, self._messages.conversation_turns, updated_dims)
                 # 刷新 soul 缓存，让下次对话使用最新内容
                 from ..prellm.soul_context import SoulContextModule
                 SoulContextModule.invalidate()

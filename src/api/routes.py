@@ -50,7 +50,8 @@ def init_services():
         log.info("使用官方 CosyVoice PyTorch 后端 (CPU)")
         _tts = OfficialTTSService(settings.data_dir / "voice")
 
-    _distiller = SoulDistiller(_llm_client, _soul_loader)
+    _distiller = SoulDistiller(_llm_client, _soul_loader,
+                              max_retries=settings.distill_max_retries)
 
     _agent_loop = AgentLoop(
         history_path=str(settings.data_dir / "conversation.json"),
@@ -414,6 +415,42 @@ async def distill_soul(file: UploadFile = File(...), chat_name: str = Form("")):
     if result.skill_card:
         response["skill_card"] = result.skill_card.to_dict()
     return response
+
+
+# ─── 记忆可视化路由 ────────────────────────────────────
+
+def _get_memory_store() -> MemoryStore:
+    assert _memory_store is not None, "init_services() must be called first"
+    return _memory_store
+
+
+@router.get("/memory/stats")
+async def get_memory_stats():
+    """返回各维度记忆数量统计。"""
+    store = _get_memory_store()
+    stats = store.stats()
+    log.info("记忆统计: total=%d, dims=%d", stats["total"], len(stats["by_dimension"]))
+    return stats
+
+
+@router.get("/memory/{dimension}")
+async def get_memory_by_dimension(dimension: str):
+    """返回某维度下所有记忆列表。"""
+    store = _get_memory_store()
+    entries = store.get_by_dimension(dimension)
+    log.info("记忆列表返回, dim=%s, count=%d", dimension, len(entries))
+    return entries
+
+
+@router.delete("/memory/{memory_id}")
+async def delete_memory(memory_id: str):
+    """删除单条记忆。"""
+    store = _get_memory_store()
+    ok = store.delete(memory_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="记忆不存在或删除失败")
+    log.info("记忆已删除, id=%s", memory_id)
+    return {"status": "ok"}
 
 
 # ─── 配置路由 ──────────────────────────────────────────

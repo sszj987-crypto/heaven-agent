@@ -50,10 +50,12 @@ class DistillResult:
 class SoulDistiller:
     """从聊天记录批量提取人格特征，智能合并到灵魂档案。"""
 
-    def __init__(self, llm_client: LLMClient, soul_loader: SoulLoader):
+    def __init__(self, llm_client: LLMClient, soul_loader: SoulLoader,
+                 max_retries: int = 2):
         self._llm = llm_client
         self._loader = soul_loader
-        log.info("SoulDistiller 初始化")
+        self._max_retries = max_retries
+        log.info("SoulDistiller 初始化, max_retries=%d", max_retries)
 
     # ── 公开接口 ──────────────────────────────────────────
 
@@ -94,7 +96,7 @@ class SoulDistiller:
 
         # Phase 2: 女娲式多维度并行行为规则提取（使用差异化采样）
         existing_skill = self._loader.load_skill()
-        agents = Phase2Agents(self._llm)
+        agents = Phase2Agents(self._llm, max_retries=self._max_retries)
         skill_card = await agents.run_all(
             preprocessed, existing_skill, soul_name=profile.name)
 
@@ -118,17 +120,16 @@ class SoulDistiller:
     # ── LLM 调用 ──────────────────────────────────────────
 
     _DISTILL_TIMEOUT = 300
-    _MAX_RETRIES = 2
 
     async def _call_llm_phase1(self, profile, chat_text: str) -> tuple[dict[str, str], str]:
         """Phase 1: 调用 LLM 分析聊天记录，返回 (new_dimensions, summary)。含重试逻辑。"""
         messages = self._build_messages(profile, chat_text)
 
         last_error = None
-        for attempt in range(self._MAX_RETRIES + 1):
+        for attempt in range(self._max_retries + 1):
             try:
                 if attempt > 0:
-                    log.warning("蒸馏 LLM 重试 %d/%d", attempt, self._MAX_RETRIES)
+                    log.warning("蒸馏 LLM 重试 %d/%d", attempt, self._max_retries)
                 raw_response = await self._llm.chat(
                     messages, timeout=self._DISTILL_TIMEOUT, max_tokens=8192,
                     json_mode=True)
@@ -136,13 +137,13 @@ class SoulDistiller:
             except Exception as e:
                 last_error = e
                 log.error("蒸馏 LLM 调用失败 (attempt %d/%d): %s",
-                          attempt + 1, self._MAX_RETRIES + 1, e)
-                if attempt < self._MAX_RETRIES:
+                          attempt + 1, self._max_retries + 1, e)
+                if attempt < self._max_retries:
                     import asyncio
                     await asyncio.sleep(2 * (attempt + 1))
         else:
             raise RuntimeError(
-                f"LLM 调用失败（已重试 {self._MAX_RETRIES} 次）: {last_error}"
+                f"LLM 调用失败（已重试 {self._max_retries} 次）: {last_error}"
             ) from last_error
 
         log.debug("LLM 原始响应 (%d chars): %s",

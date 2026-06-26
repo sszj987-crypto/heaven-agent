@@ -82,12 +82,18 @@ class Pipeline:
         llm_client = get_llm_client()
         soul_loader = get_soul_loader()
         memory_store = get_memory_store()
-        circumstances = Settings.get().circumstances
+        settings = Settings.get()
+        circumstances = settings.circumstances
 
         CircumstancesModule.update(circumstances)
         SoulContextModule.set_deps(soul_loader, message_manager)
         ContextCompressModule.set_deps(llm_client, message_manager)
+        ContextCompressModule.configure(
+            crunch_interval=settings.crunch_interval,
+            keep_recent=settings.compress_keep_recent,
+        )
         MemoryPersistModule.set_deps(message_manager)
+        MemoryExtractModule.configure(crunch_interval=settings.crunch_interval)
         if memory_store:
             MemoryRetrieveModule.set_deps(memory_store)
             ContextCompressModule.set_deps(llm_client, message_manager, memory_store)

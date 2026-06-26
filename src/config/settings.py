@@ -51,6 +51,26 @@ class Settings:
         return self._config.frontend_origin
 
     @property
+    def crunch_interval(self) -> int:
+        return self._config.crunch_interval
+
+    @property
+    def compress_keep_recent(self) -> int:
+        return self._config.compress_keep_recent
+
+    @property
+    def max_conversation_turns(self) -> int:
+        return self._config.max_conversation_turns
+
+    @property
+    def max_regenerate(self) -> int:
+        return self._config.max_regenerate
+
+    @property
+    def distill_max_retries(self) -> int:
+        return self._config.distill_max_retries
+
+    @property
     def log_level(self) -> str:
         return self._log_level
 
@@ -93,7 +113,20 @@ class Settings:
         path.write_text(json.dumps(asdict(dataclass_instance), indent=2, ensure_ascii=False))
 
     def _save_app_json(self):
-        """保存 app.json 中的运行时设置（soul_path, log_level 等）"""
+        """保存 app.json 中的运行时设置"""
         path = self._config_dir / "app.json"
-        data = {"soul_path": self._config.soul_path, "log_level": self._log_level, "frontend_origin": self._config.frontend_origin}
+        data = {
+            "soul_path": self._config.soul_path,
+            "log_level": self._log_level,
+            "frontend_origin": self._config.frontend_origin,
+            "pipeline": {
+                "crunch_interval": self._config.crunch_interval,
+                "compress_keep_recent": self._config.compress_keep_recent,
+                "max_conversation_turns": self._config.max_conversation_turns,
+                "max_regenerate": self._config.max_regenerate,
+            },
+            "distill": {
+                "max_retries": self._config.distill_max_retries,
+            },
+        }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False))

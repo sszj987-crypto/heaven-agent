@@ -188,6 +188,40 @@ export async function fetchSkill(): Promise<Record<string, string> | null> {
   return data.skill_card || null;
 }
 
+export interface MemoryEntry {
+  id: string;
+  document: string;
+  metadata: {
+    dimension: string;
+    strength: number;
+    last_accessed_at: string;
+    access_count: number;
+    [key: string]: unknown;
+  };
+}
+
+export interface MemoryStats {
+  total: number;
+  by_dimension: Record<string, number>;
+}
+
+export async function fetchMemoryStats(): Promise<MemoryStats> {
+  const res = await fetch(`${BASE}/memory/stats`);
+  if (!res.ok) throw new Error(`Failed to fetch memory stats: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchMemoryByDimension(dimension: string): Promise<MemoryEntry[]> {
+  const res = await fetch(`${BASE}/memory/${encodeURIComponent(dimension)}`);
+  if (!res.ok) throw new Error(`Failed to fetch memory: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Failed to delete memory: ${res.status}`);
+}
+
 export async function distillSoul(file: File, chatName?: string): Promise<DistillResult> {
   const formData = new FormData();
   formData.append("file", file);

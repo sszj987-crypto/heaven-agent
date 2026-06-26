@@ -197,6 +197,16 @@ class MemoryStore:
                 })
         return entries
 
+    def delete(self, mem_id: str) -> bool:
+        """删除单条记忆。返回是否成功。"""
+        try:
+            self._collection.delete(ids=[mem_id])
+            log.info("记忆已删除, id=%s", mem_id)
+            return True
+        except Exception as e:
+            log.warning("删除记忆失败, id=%s, error=%s", mem_id, e)
+            return False
+
     def delete_by_dimension(self, dimension: str) -> int:
         """删除某维度的全部记忆。返回删除数。"""
         existing = self.get_by_dimension(dimension)

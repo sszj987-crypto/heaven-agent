@@ -1,5 +1,16 @@
 {
   "soul_path": "config/souls/test",
   "log_level": "debug",
-  "frontend_origin": "http://localhost:3326"
+  "frontend_origin": "http://localhost:3326",
+
+  "pipeline": {
+    "crunch_interval": 10,
+    "compress_keep_recent": 6,
+    "max_conversation_turns": 20,
+    "max_regenerate": 2
+  },
+
+  "distill": {
+    "max_retries": 2
+  }
 }

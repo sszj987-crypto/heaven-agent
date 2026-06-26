@@ -68,14 +68,15 @@ def _parse_llm_response(raw: str) -> tuple[str, str]:
 class AgentLoop:
     """Agent 主循环：Input → PreLLM → LLM → PostLLM → PostOutput"""
 
-    _MAX_REGENERATE = 2
-
     def __init__(self, history_path: str = ""):
         from ..llm.manager import get_llm_client
+        from ..config.settings import Settings
 
+        settings = Settings.get()
         self._llm = get_llm_client()
-        self._messages = MessageManager()
+        self._messages = MessageManager(max_turns=settings.max_conversation_turns)
         self._history_path = history_path
+        self._max_regenerate = settings.max_regenerate
 
         if history_path:
             loaded = self._messages.load_from_file(history_path)
@@ -100,9 +101,9 @@ class AgentLoop:
         log.debug("PreLLM 耗时=%.2fs", time.monotonic() - t_prellm)
 
         # ── LLM（可能触发重生成）──
-        for attempt in range(self._MAX_REGENERATE + 1):
+        for attempt in range(self._max_regenerate + 1):
             if attempt > 0:
-                log.warning("LLM 重生成, attempt=%d/%d", attempt + 1, self._MAX_REGENERATE + 1)
+                log.warning("LLM 重生成, attempt=%d/%d", attempt + 1, self._max_regenerate + 1)
             ctx.need_regenerate = False
             ctx.response = ""
             ctx.instruct_text = ""

@@ -21,19 +21,19 @@ from ..config.logger import get_logger
 log = get_logger("phase2_agents")
 
 _TIMEOUT = 300
-_MAX_RETRIES = 2
 
 
 class Phase2Agents:
     """Phase 2 多维度并行分析器。
 
     用法:
-        agents = Phase2Agents(llm_client)
+        agents = Phase2Agents(llm_client, max_retries=2)
         skill_card = await agents.run_all(preprocessed, existing_skill)
     """
 
-    def __init__(self, llm_client):
+    def __init__(self, llm_client, max_retries: int = 2):
         self._llm = llm_client
+        self._max_retries = max_retries
 
     async def run_all(self, preprocessed: PreprocessedChat | None,
                       existing_skill: SkillCard | None = None,
@@ -197,11 +197,11 @@ class Phase2Agents:
         ]
 
         last_error = None
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(self._max_retries + 1):
             try:
                 if attempt > 0:
                     log.warning("Agent %s LLM 重试 %d/%d",
-                                agent_name, attempt, _MAX_RETRIES)
+                                agent_name, attempt, self._max_retries)
                 raw = await self._llm.chat(
                     messages, timeout=_TIMEOUT, max_tokens=2048 if agent_name == "synthesize" else 3072,
                     json_mode=True)
@@ -211,8 +211,8 @@ class Phase2Agents:
             except Exception as e:
                 last_error = e
                 log.error("Agent %s 失败 (attempt %d/%d): %s",
-                          agent_name, attempt + 1, _MAX_RETRIES + 1, e)
-                if attempt < _MAX_RETRIES:
+                          agent_name, attempt + 1, self._max_retries + 1, e)
+                if attempt < self._max_retries:
                     await asyncio.sleep(2 * (attempt + 1))
 
         log.warning("Agent %s 全部重试失败: %s", agent_name, last_error)

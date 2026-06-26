@@ -4,8 +4,6 @@ from ....config.logger import get_logger
 
 log = get_logger("compress")
 
-DEFAULT_MAX_TURNS = 20       # 超过 20 轮触发压缩
-DEFAULT_MAX_CHARS = 20_000   # 对话字符数超过 20k 触发压缩
 SUMMARY_SYSTEM_PROMPT = (
     "你是一个对话摘要助手。请用 2-3 句话概括以下对话的核心内容，"
     "保留关键信息：人名、事件、情绪变化、重要决定。"
@@ -13,18 +11,19 @@ SUMMARY_SYSTEM_PROMPT = (
 
 
 class ContextCompressModule(PipelineModule):
-    """
-    上下文压缩模块。
-    仅对 user/assistant 对话消息做压缩，system 消息（soul context 等）完整保留。
-    检测对话是否超过轮数/长度阈值，超限时异步调用 LLM 生成摘要，
-    用摘要替换早期对话消息，保持上下文在预算内。
+    """每 crunch_interval 轮压缩一次上下文，用 LLM 摘要替换早期对话。
+
+    - 保留最近 keep_recent 条对话消息
+    - 其余 user/assistant 消息替换为一条摘要 system 消息
+    - system 消息（soul context 等）完整保留
     """
 
-    _max_turns: int = DEFAULT_MAX_TURNS
-    _max_chars: int = DEFAULT_MAX_CHARS
     _llm = None
     _messages = None
     _store = None
+    _compressing: bool = False
+    _crunch_interval: int = 10
+    _keep_recent: int = 6
 
     @classmethod
     def set_deps(cls, llm_client, message_manager, store=None):
@@ -33,55 +32,51 @@ class ContextCompressModule(PipelineModule):
         cls._store = store
 
     @classmethod
-    def configure(cls, max_turns: int = 20, max_chars: int = 20_000):
-        """配置压缩阈值"""
-        cls._max_turns = max_turns
-        cls._max_chars = max_chars
+    def configure(cls, crunch_interval: int = 10, keep_recent: int = 6):
+        cls._crunch_interval = crunch_interval
+        cls._keep_recent = keep_recent
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         turns = self._messages.conversation_turns
-        chars = self._messages.conversation_chars
-        log.info("上下文压缩检查, turns=%d/%d, chars=%d/%d",
-                 turns, self._max_turns, chars, self._max_chars)
 
-        if turns <= self._max_turns and chars <= self._max_chars:
-            log.debug("无需压缩, 未达阈值")
-            return ctx  # 未超阈值，不压缩
+        if turns <= 0 or turns % self._crunch_interval != 0:
+            return ctx
 
-        log.info("触发上下文压缩, turns=%d, chars=%d, 总消息=%d", turns, chars, len(self._messages.get_all()))
-        # 异步触发摘要（不阻塞当前回复）
+        if self._compressing:
+            log.info("上下文压缩跳过: 上一轮压缩仍在进行中")
+            return ctx
+
+        log.info("触发上下文压缩, turns=%d, 总消息=%d", turns, len(self._messages.get_all()))
         import asyncio
         asyncio.create_task(self._compress())
         return ctx
 
     async def _compress(self):
-        """仅压缩 user/assistant 对话，system 消息完整保留"""
-        conv = self._messages.conversation
-        half = len(conv) // 2
-        old_conv = conv[:half]
-
-        # 只保留最近 4 条（2 轮），其余替换为摘要
-        keep_recent = min(4, len(conv) - half)
-
-        # 构建摘要请求
-        conversation_text = "\n".join(
-            f"{'用户' if m['role'] == 'user' else '逝者'}: {m['content']}"
-            for m in old_conv
-        )
-        summary_messages = [
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": conversation_text},
-        ]
-
+        self.__class__._compressing = True
         try:
+            conv = self._messages.conversation
+            if len(conv) <= self._keep_recent:
+                log.debug("对话消息不足, 跳过压缩, conv=%d, keep=%d", len(conv), self._keep_recent)
+                return
+
+            # 保留最近消息，压缩旧消息
+            old_conv = conv[:-self._keep_recent]
+            conversation_text = "\n".join(
+                f"{'用户' if m['role'] == 'user' else '逝者'}: {m['content']}"
+                for m in old_conv
+            )
+            summary_messages = [
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": conversation_text},
+            ]
+
             summary = await self._llm.chat(summary_messages)
             self._messages.compress_conversation(
-                keep_recent=keep_recent,
+                keep_recent=self._keep_recent,
                 summary=summary,
             )
-            log.info("上下文压缩完成, 摘要=%s...", summary[:50])
+            log.info("上下文压缩完成, 摘要=%s...", summary[:80])
 
-            # 摘要同时存入 ChromaDB，供语义检索
             if self._store:
                 self._store.add(
                     "conversation",
@@ -91,7 +86,5 @@ class ContextCompressModule(PipelineModule):
                 log.debug("压缩摘要已写入 ChromaDB")
         except Exception as e:
             log.error("上下文压缩失败: %s", e)
-
-    @classmethod
-    def get_thresholds(cls) -> dict:
-        return {"max_turns": cls._max_turns, "max_chars": cls._max_chars}
+        finally:
+            self.__class__._compressing = False

@@ -5,7 +5,8 @@ import {
   fetchSoul, fetchDimension, updateDimension,
   uploadVoiceSample, fetchCircumstances, updateCircumstances,
   fetchVoiceStatus, distillSoul, fetchSkill,
-  type SceneOption, type DistillResult,
+  fetchMemoryStats, fetchMemoryByDimension, deleteMemory,
+  type SceneOption, type DistillResult, type MemoryStats, type MemoryEntry,
 } from "@/lib/api";
 
 const DIMENSION_LABELS: Record<string, string> = {
@@ -159,6 +160,12 @@ export default function SoulPage() {
       loadSkill();
       return;
     }
+    if (tab === "memory") {
+      setActiveTab("memory");
+      setLoading(false);
+      setMsg("");
+      return;
+    }
     loadDimension(tab);
   };
 
@@ -282,7 +289,7 @@ export default function SoulPage() {
     }
   }, [distillFile]);
 
-  const isDimensionTab = activeTab !== "scene" && activeTab !== "voice" && activeTab !== "distill" && activeTab !== "skill";
+  const isDimensionTab = activeTab !== "scene" && activeTab !== "voice" && activeTab !== "distill" && activeTab !== "skill" && activeTab !== "memory";
   const isModified = isDimensionTab
     ? content !== originalContent || (activeTab === "basic_info" && soulName !== originalName)
     : activeTab === "scene"
@@ -368,6 +375,17 @@ export default function SoulPage() {
         >
           行为规则
         </button>
+        <div className="border-t border-white/5 my-1" />
+        <button
+          onClick={() => switchTab("memory")}
+          className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+            activeTab === "memory"
+              ? "bg-white/10 text-white/80"
+              : "text-white/40 hover:text-white/60 hover:bg-white/5"
+          }`}
+        >
+          记忆可视化
+        </button>
       </aside>
 
       {/* 右侧面板 */}
@@ -411,6 +429,8 @@ export default function SoulPage() {
         />
       ) : activeTab === "skill" ? (
         <SkillPanel skillCard={skillCard} loading={skillLoading} onRefresh={loadSkill} />
+      ) : activeTab === "memory" ? (
+        <MemoryPanel />
       ) : (
         <div className="flex-1 flex flex-col">
           <div className="flex items-center justify-between px-6 py-3 border-b border-white/10">
@@ -916,6 +936,172 @@ function SkillPanel({
           </pre>
         ) : (
           <p className="text-sm text-white/20 italic">此维度暂无内容</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const MEMORY_DIMENSION_LABELS: Record<string, string> = {
+  life_experiences: "人生经历",
+  relationships: "人际关系",
+  personal_traits: "个人特质",
+  emotional_anchors: "情感锚点",
+  basic_info: "基本信息",
+  personality: "性格",
+};
+
+function MemoryPanel() {
+  const [stats, setStats] = useState<MemoryStats | null>(null);
+  const [selectedDim, setSelectedDim] = useState<string | null>(null);
+  const [entries, setEntries] = useState<MemoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dimLoading, setDimLoading] = useState(false);
+
+  const loadStats = useCallback(async () => {
+    setLoading(true);
+    try {
+      setStats(await fetchMemoryStats());
+    } catch {
+      setStats(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadDim = useCallback(async (dim: string) => {
+    setDimLoading(true);
+    setSelectedDim(dim);
+    try {
+      setEntries(await fetchMemoryByDimension(dim));
+    } catch {
+      setEntries([]);
+    } finally {
+      setDimLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadStats(); }, [loadStats]);
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteMemory(id);
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+      loadStats();
+    } catch {}
+  };
+
+  const dims = stats?.by_dimension ?? {};
+  const dimList = Object.entries(dims).sort(([, a], [, b]) => b - a);
+  const maxCount = Math.max(...Object.values(dims), 1);
+
+  return (
+    <div className="flex-1 flex flex-col">
+      <div className="flex items-center px-6 py-3 border-b border-white/10">
+        <h3 className="text-sm text-white/50">记忆可视化</h3>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-white/20">加载中...</div>
+        ) : !stats || stats.total === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-2">
+            <p className="text-sm text-white/40">暂无记忆数据</p>
+            <p className="text-xs text-white/20">对话过程中系统会自动提取和存储记忆</p>
+          </div>
+        ) : (
+          <>
+            {/* 概览 */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+              <p className="text-sm text-white/60 mb-3">
+                总计 <span className="text-white/80 font-medium">{stats.total}</span> 条记忆
+              </p>
+              <div className="space-y-2">
+                {dimList.map(([dim, count]) => (
+                  <button
+                    key={dim}
+                    onClick={() => loadDim(dim)}
+                    className={`w-full flex items-center gap-3 text-left rounded-lg px-3 py-2 transition-colors ${
+                      selectedDim === dim
+                        ? "bg-white/10"
+                        : "hover:bg-white/5"
+                    }`}
+                  >
+                    <span className="text-xs text-white/50 w-24 shrink-0">
+                      {MEMORY_DIMENSION_LABELS[dim] || dim}
+                    </span>
+                    <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-white/20 transition-all"
+                        style={{ width: `${(count / maxCount) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-white/30 w-6 text-right">{count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 维度详情 */}
+            {selectedDim && (
+              <div className="space-y-3">
+                <h4 className="text-xs text-white/30">
+                  {MEMORY_DIMENSION_LABELS[selectedDim] || selectedDim}
+                  {" · "}{entries.length} 条
+                </h4>
+                {dimLoading ? (
+                  <div className="text-xs text-white/20">加载中...</div>
+                ) : entries.length === 0 ? (
+                  <p className="text-xs text-white/20">该维度暂无记忆</p>
+                ) : (
+                  entries.map((entry) => {
+                    const s = entry.metadata.strength ?? 0;
+                    const pct = Math.round(s * 100);
+                    const barColor =
+                      s > 0.7 ? "bg-green-500/40" :
+                      s > 0.4 ? "bg-yellow-500/40" :
+                      "bg-red-500/40";
+                    return (
+                      <div
+                        key={entry.id}
+                        className="rounded-lg border border-white/5 bg-white/[0.02] p-3 group"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm text-white/70 leading-relaxed flex-1">
+                            {entry.document}
+                          </p>
+                          <button
+                            onClick={() => handleDelete(entry.id)}
+                            className="shrink-0 opacity-0 group-hover:opacity-100 text-white/20 hover:text-red-400 transition-all text-xs"
+                            title="删除此记忆"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-3 mt-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-white/30">强度</span>
+                            <div className="w-12 h-1.5 rounded-full bg-white/5 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${barColor}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] text-white/30">{pct}%</span>
+                          </div>
+                          {entry.metadata.access_count > 0 && (
+                            <span className="text-[10px] text-white/20">
+                              访问 {entry.metadata.access_count} 次
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
