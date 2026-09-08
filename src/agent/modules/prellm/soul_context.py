@@ -22,10 +22,10 @@ class SoulContextModule(PipelineModule):
 
     @property
     def _prompt_builder(self):
-        if SoulContextModule._builder is None:
+        if self._builder is None:
             from ....soul.prompt_builder import SoulPromptBuilder
-            SoulContextModule._builder = SoulPromptBuilder()
-        return SoulContextModule._builder
+            self._builder = SoulPromptBuilder()
+        return self._builder
 
     async def process(self, ctx: PipelineContext) -> PipelineContext:
         circumstances = ctx.circumstances or ""
@@ -35,19 +35,15 @@ class SoulContextModule(PipelineModule):
         profile = self._loader.load()
         ctx.soul_profile = profile
 
-        # 构建 System Prompt（带缓存）
-        if SoulContextModule._cached_prompt is not None:
-            ctx.system_prompt = SoulContextModule._cached_prompt
-            log.debug("使用缓存的 System Prompt, 长度=%d", len(ctx.system_prompt))
-        else:
-            skill_card = self._loader.load_skill() if self._loader.has_skill() else None
-            memories = getattr(ctx, "retrieved_memories", None) or []
-            ctx.system_prompt = self._prompt_builder.build(
-                profile, circumstances, skill_card, memories)
-            SoulContextModule._cached_prompt = ctx.system_prompt
-            log.info("构建新 System Prompt, soul=%s, 长度=%d chars, has_skill=%s, memories=%d",
-                     profile.name, len(ctx.system_prompt),
-                     bool(skill_card and skill_card.has_content), len(memories))
+        # 场景与检索记忆是逐轮动态数据，不能缓存进完整 System Prompt。
+        # 后续如需优化，只能缓存不含 circumstances/memories 的静态人格片段。
+        skill_card = self._loader.load_skill() if self._loader.has_skill() else None
+        memories = getattr(ctx, "retrieved_memories", None) or []
+        ctx.system_prompt = self._prompt_builder.build(
+            profile, circumstances, skill_card, memories)
+        log.info("构建 System Prompt, soul=%s, 长度=%d chars, has_skill=%s, memories=%d",
+                 profile.name, len(ctx.system_prompt),
+                 bool(skill_card and skill_card.has_content), len(memories))
 
         # 组装 messages: system + 历史消息 + 当前消息
         history = self._messages.get_all()
@@ -56,14 +52,14 @@ class SoulContextModule(PipelineModule):
         ctx.llm_messages.append({"role": "user", "content": ctx.user_message})
         log.info("Soul Context 构建完成, system=%d chars, history=%d msgs, current_msg=%d chars, total_msgs=%d",
                  len(ctx.system_prompt), len(history), len(ctx.user_message), len(ctx.llm_messages))
-        # DEBUG: 完整打印 LLM 输入 messages（不截断）
+        # 仅记录结构与长度，避免私密内容进入日志。
         if log.isEnabledFor(10):
-            log.debug("── LLM 输入 messages 全文开始（total=%d msgs）──", len(ctx.llm_messages))
+            log.debug("── LLM 输入结构（total=%d msgs）──", len(ctx.llm_messages))
             for i, msg in enumerate(ctx.llm_messages):
-                log.debug("[%d/%d] role=%s, len=%d\n%s",
-                         i + 1, len(ctx.llm_messages), msg["role"], len(msg["content"]), msg["content"])
+                log.debug("[%d/%d] role=%s, len=%d",
+                         i + 1, len(ctx.llm_messages), msg["role"], len(msg["content"]))
             total_chars = sum(len(m["content"]) for m in ctx.llm_messages)
-            log.debug("── LLM 输入 messages 全文结束（total=%d msgs, %d chars）──",
+            log.debug("── LLM 输入结构结束（total=%d msgs, %d chars）──",
                      len(ctx.llm_messages), total_chars)
         return ctx
 

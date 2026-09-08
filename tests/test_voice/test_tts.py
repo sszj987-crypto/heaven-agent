@@ -99,6 +99,9 @@ class TestTTSService:
     def test_has_reference_false_initially(self):
         assert not self._tts.has_reference
 
+    def test_mlx_backend_reports_instruction_support(self):
+        assert self._tts.supports_instruction is True
+
     def test_save_reference_audio_silent_accepted(self):
         """静音音频也可以保存（不再强制要求 Whisper 转写 ref_text）"""
         import struct

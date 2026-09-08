@@ -1,291 +1,355 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
-import { sendTextMessage, sendVoiceMessage, fetchAudio, fetchHistory, deleteHistory } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-type Message = {
-  role: "user" | "assistant";
-  content: string;
-  audioUrl?: string;
-  audioLoading?: boolean;
-  textShown?: boolean;
-};
+import {
+  deleteHistory,
+  fetchAudio,
+  fetchHistory,
+  sendTextMessage,
+  sendVoiceMessage,
+} from "@/lib/api";
+import {
+  createAssistantMessage,
+  voicePhasePresentation,
+  withAudioState,
+  type ChatPhase,
+  type Message,
+} from "./chat-state";
+
+function requestError(error: unknown, fallback: string): string {
+  if (error instanceof TypeError && error.message === "Failed to fetch") {
+    return "无法连接后端，请确认后端服务已启动 (localhost:8326)";
+  }
+  return error instanceof Error ? error.message : fallback;
+}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [recording, setRecording] = useState(false);
+  const [phase, setPhase] = useState<ChatPhase>("idle");
+  const [interactionError, setInteractionError] = useState("");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const pressingRef = useRef(false);
   const chunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const objectUrlsRef = useRef(new Set<string>());
 
-  // 组件卸载时停止正在播放的音频
   useEffect(() => {
+    const objectUrls = objectUrlsRef.current;
     return () => {
+      pressingRef.current = false;
+      const recorder = mediaRecorderRef.current;
+      if (recorder?.state === "recording") recorder.stop();
       audioRef.current?.pause();
       audioRef.current = null;
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+      objectUrls.clear();
     };
   }, []);
 
-  // 页面加载时从后端恢复对话历史
   useEffect(() => {
-    fetchHistory().then((history) => {
-      if (history.length > 0) {
-        const msgs: Message[] = history
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
-        if (msgs.length > 0) setMessages(msgs);
-      }
-    }).catch(() => {});
+    fetchHistory()
+      .then((history) => {
+        const restored: Message[] = history
+          .filter((message) => message.role === "user" || message.role === "assistant")
+          .map((message) => ({
+            role: message.role as "user" | "assistant",
+            content: message.content,
+          }));
+        if (restored.length > 0) setMessages(restored);
+      })
+      .catch(() => undefined);
   }, []);
 
-  const handleReplayAudio = useCallback((url: string) => {
-    // 停止当前播放
+  const updateMessage = useCallback(
+    (index: number, update: (message: Message) => Message) => {
+      setMessages((current) => current.map((message, itemIndex) =>
+        itemIndex === index ? update(message) : message
+      ));
+    },
+    [],
+  );
+
+  const playAudioUrl = useCallback((url: string, index: number) => {
     audioRef.current?.pause();
-    audioRef.current = null;
-    // 开始新播放
     const audio = new Audio(url);
     audioRef.current = audio;
-    audio.onended = () => { audioRef.current = null; };
-    audio.play().catch(() => { audioRef.current = null; });
-  }, []);
+    audio.onended = () => {
+      if (audioRef.current === audio) audioRef.current = null;
+    };
+    audio.onerror = () => {
+      if (audioRef.current === audio) audioRef.current = null;
+      updateMessage(index, (message) =>
+        withAudioState(message, "error", "语音播放失败，请重试")
+      );
+    };
+    audio.play()
+      .then(() => {
+        updateMessage(index, (message) => withAudioState(message, "ready"));
+      })
+      .catch((error: unknown) => {
+        if (audioRef.current === audio) audioRef.current = null;
+        const blocked = error instanceof DOMException && error.name === "NotAllowedError";
+        updateMessage(index, (message) => withAudioState(
+          message,
+          "error",
+          blocked ? "语音已生成，请再次点击播放" : "语音播放失败，请重试",
+        ));
+      });
+  }, [updateMessage]);
 
-  const handleToggleText = useCallback((index: number) => {
-    setMessages((prev) => prev.map((m, i) =>
-      i === index ? { ...m, textShown: !m.textShown } : m
-    ));
-  }, []);
+  const handlePlayAudio = useCallback(async (index: number) => {
+    const message = messages[index];
+    if (!message?.audioParams || message.audioState === "loading") return;
+
+    if (message.audioUrl) {
+      updateMessage(index, (current) => withAudioState(current, "ready"));
+      playAudioUrl(message.audioUrl, index);
+      return;
+    }
+
+    updateMessage(index, (current) => withAudioState(current, "loading"));
+    try {
+      const audioBlob = await fetchAudio(message.audioParams);
+      const url = URL.createObjectURL(audioBlob);
+      objectUrlsRef.current.add(url);
+      updateMessage(index, (current) => ({
+        ...withAudioState(current, "ready"),
+        audioUrl: url,
+      }));
+      playAudioUrl(url, index);
+    } catch (error) {
+      updateMessage(index, (current) => withAudioState(
+        current,
+        "error",
+        requestError(error, "语音生成失败，请重试"),
+      ));
+    }
+  }, [messages, playAudioUrl, updateMessage]);
 
   const handleSendText = useCallback(async () => {
-    if (!input.trim() || loading) return;
+    if (!input.trim() || phase !== "idle") return;
     const text = input.trim();
     setInput("");
-    const msgIndex = messages.length;
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
-    setLoading(true);
+    setInteractionError("");
+    setMessages((current) => [...current, { role: "user", content: text }]);
+    setPhase("replying");
 
     try {
-      const { responseText, hasVoice, audioParams } = await sendTextMessage(text);
-      // 立即显示文字回复
-      setMessages((prev) => [...prev, { role: "assistant", content: responseText }]);
-      setLoading(false);
-      // 后台获取音频
-      if (hasVoice) {
-        const respIndex = msgIndex + 1;
-        setMessages((prev) => prev.map((m, i) =>
-          i === respIndex ? { ...m, audioLoading: true } : m
-        ));
-        try {
-          const audioBlob = await fetchAudio(audioParams);
-          const url = URL.createObjectURL(audioBlob);
-          setMessages((prev) => prev.map((m, i) =>
-            i === respIndex ? { ...m, audioUrl: url, audioLoading: false } : m
-          ));
-          handleReplayAudio(url);
-        } catch {
-          setMessages((prev) => prev.map((m, i) =>
-            i === respIndex ? { ...m, audioLoading: false } : m
-          ));
-        }
-      }
-    } catch (err) {
-      const reason = err instanceof TypeError && err.message === "Failed to fetch"
-        ? "无法连接后端，请确认后端服务已启动 (localhost:8326)"
-        : (err instanceof Error ? err.message : "未知错误");
-      setMessages((prev) => [...prev, { role: "assistant", content: `[回复失败] ${reason}` }]);
-      setLoading(false);
+      const response = await sendTextMessage(text);
+      setMessages((current) => [...current, createAssistantMessage(response)]);
+    } catch (error) {
+      setInteractionError(requestError(error, "回复失败，请重试"));
+    } finally {
+      setPhase("idle");
     }
-  }, [input, loading, messages.length, handleReplayAudio]);
+  }, [input, phase]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendText();
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void handleSendText();
     }
   };
 
   const startRecording = useCallback(async () => {
+    if (phase !== "idle") return;
+    pressingRef.current = true;
+    setInteractionError("");
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      mediaRecorderRef.current = mediaRecorder;
+      if (!pressingRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      const webmSupported = typeof MediaRecorder.isTypeSupported === "function"
+        && MediaRecorder.isTypeSupported("audio/webm");
+      const recorder = new MediaRecorder(
+        stream,
+        webmSupported ? { mimeType: "audio/webm" } : undefined,
+      );
+      mediaRecorderRef.current = recorder;
       chunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
       };
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
-        stream.getTracks().forEach((t) => t.stop());
-        if (audioBlob.size === 0) return;
+      recorder.onerror = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        mediaRecorderRef.current = null;
+        pressingRef.current = false;
+        setInteractionError("录音失败，请检查麦克风后重试");
+        setPhase("idle");
+      };
 
-        setLoading(true);
-        const msgIndex = messages.length;
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        mediaRecorderRef.current = null;
+        const mimeType = recorder.mimeType || chunksRef.current[0]?.type || "audio/webm";
+        const audioBlob = new Blob(chunksRef.current, { type: mimeType });
+        chunksRef.current = [];
+
+        if (audioBlob.size === 0) {
+          setInteractionError("没有录到声音，请按住麦克风后再说话");
+          setPhase("idle");
+          return;
+        }
+
         try {
-          const { responseText, hasVoice, audioParams } = await sendVoiceMessage(audioBlob);
-          setMessages((prev) => [
-            ...prev,
-            { role: "user", content: "[语音消息]" },
-            { role: "assistant", content: responseText },
+          const response = await sendVoiceMessage(audioBlob);
+          setMessages((current) => [
+            ...current,
+            { role: "user", content: response.transcript || "[未能显示语音转写]" },
+            createAssistantMessage(response),
           ]);
-          setLoading(false);
-          // 后台获取音频
-          if (hasVoice) {
-            const respIndex = msgIndex + 1;
-            setMessages((prev) => prev.map((m, i) =>
-              i === respIndex ? { ...m, audioLoading: true } : m
-            ));
-            try {
-              const respBlob = await fetchAudio(audioParams);
-              const url = URL.createObjectURL(respBlob);
-              setMessages((prev) => prev.map((m, i) =>
-                i === respIndex ? { ...m, audioUrl: url, audioLoading: false } : m
-              ));
-              handleReplayAudio(url);
-            } catch {
-              setMessages((prev) => prev.map((m, i) =>
-                i === respIndex ? { ...m, audioLoading: false } : m
-              ));
-            }
-          }
-        } catch {
-          setMessages((prev) => [...prev, { role: "assistant", content: "[语音回复失败]" }]);
-          setLoading(false);
+        } catch (error) {
+          setInteractionError(requestError(error, "语音识别失败，请重试"));
+        } finally {
+          setPhase("idle");
         }
       };
 
-      mediaRecorder.start();
-      setRecording(true);
-    } catch {
-      alert("无法访问麦克风，请检查浏览器权限");
+      recorder.start();
+      setPhase("recording");
+    } catch (error) {
+      pressingRef.current = false;
+      setPhase("idle");
+      setInteractionError(requestError(error, "无法访问麦克风，请检查浏览器权限"));
     }
-  }, [messages.length, handleReplayAudio]);
+  }, [phase]);
 
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop();
-    setRecording(false);
-  };
+  const stopRecording = useCallback(() => {
+    pressingRef.current = false;
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state !== "recording") return;
+    setPhase("transcribing");
+    recorder.stop();
+  }, []);
 
   const handleDelete = async () => {
-    if (!confirm("确定要删除所有对话记录吗？此操作不可撤销。")) return;
+    if (!confirm("确定要清空当前对话吗？原记录会归档到本地回收目录，可手工恢复。")) return;
     try {
       await deleteHistory();
+      audioRef.current?.pause();
+      audioRef.current = null;
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      objectUrlsRef.current.clear();
       setMessages([]);
+      setInteractionError("");
+      setPhase("idle");
     } catch {
-      alert("删除失败，请重试");
+      setInteractionError("删除失败，请重试");
     }
   };
 
+  const phaseView = voicePhasePresentation(phase);
+  const busy = phase !== "idle";
+
   return (
-    <div className="flex flex-col h-[calc(100vh-57px)] max-w-2xl mx-auto w-full">
-      {/* 顶部操作栏 */}
+    <div className="chat-page">
       {messages.length > 0 && (
-        <div className="flex justify-end px-6 py-2 border-b border-white/5">
-          <button
-            onClick={handleDelete}
-            className="text-xs text-white/20 hover:text-red-400/60 transition-colors px-2 py-1 rounded"
-            title="删除会话"
-          >
+        <div className="flex shrink-0 justify-end px-8 py-3 border-b border-white/5">
+          <button onClick={handleDelete} className="text-xs text-stone-400 hover:text-red-300 transition-colors px-2 py-1 rounded" title="删除会话">
             清空对话
           </button>
         </div>
       )}
-      {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-        {messages.length === 0 && (
+
+      <div aria-label="对话消息" role="region" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto px-8 py-6 space-y-5">
+        {messages.length === 0 && phase === "idle" && (
           <p className="text-center text-white/20 mt-20">开始一段对话吧</p>
         )}
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                m.role === "user"
-                  ? "bg-white/10 text-white/90"
-                  : "bg-white/5 text-white/70 border border-white/10"
-              }`}
-            >
-              {/* user 消息：直接显示文字 */}
-              {m.role === "user" && <p>{m.content}</p>}
 
-              {/* assistant 消息：语音优先 */}
-              {m.role === "assistant" && (
-                <>
-                  {/* 语音加载中 */}
-                  {m.audioLoading && (
-                    <div className="flex items-center gap-2 text-sm text-white/40">
-                      <div className="w-3 h-3 rounded-full border border-white/20 border-t-white/50 animate-spin" />
-                      语音生成中...
-                    </div>
+        {messages.map((message, index) => (
+          <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-[min(80%,720px)] [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+              message.role === "user"
+                ? "bg-white/10 text-white/90"
+                : "bg-white/5 text-white/70 border border-white/10"
+            }`}>
+              <p>{message.content}</p>
+
+              {message.role === "assistant" && message.audioParams && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => void handlePlayAudio(index)}
+                    disabled={message.audioState === "loading"}
+                    className="inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white/90 disabled:text-white/30 transition-colors bg-white/5 hover:bg-white/10 rounded-full px-3 py-1"
+                  >
+                    {message.audioState === "loading" ? (
+                      <span className="w-3 h-3 rounded-full border border-white/20 border-t-white/50 animate-spin" />
+                    ) : (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="5,3 19,12 5,21" />
+                      </svg>
+                    )}
+                    {message.audioState === "loading"
+                      ? "正在生成语音…"
+                      : message.audioState === "error"
+                        ? "重试播放"
+                        : "播放语音"}
+                  </button>
+                  {message.audioError && (
+                    <p className="mt-1.5 text-xs text-amber-200/60">{message.audioError}</p>
                   )}
+                </div>
+              )}
 
-                  {/* 无语音：fallback 显示文字（历史消息等） */}
-                  {!m.audioUrl && !m.audioLoading && (
-                    <p>{m.content}</p>
-                  )}
-
-                  {/* 语音已就绪 */}
-                  {m.audioUrl && !m.audioLoading && (
-                    <>
-                      {/* 文字：按需展示 */}
-                      {m.textShown && (
-                        <p className="mb-2">{m.content}</p>
-                      )}
-
-                      {/* 音频控制栏 */}
-                      <div className="flex items-center gap-2 text-xs">
-                        <button
-                          onClick={() => handleReplayAudio(m.audioUrl!)}
-                          className="inline-flex items-center gap-1.5 text-white/60 hover:text-white/90 transition-colors bg-white/5 hover:bg-white/10 rounded-full px-3 py-1"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                            <polygon points="5,3 19,12 5,21" />
-                          </svg>
-                          重新播放
-                        </button>
-                        <button
-                          onClick={() => handleToggleText(i)}
-                          className="inline-flex items-center gap-1 text-white/40 hover:text-white/70 transition-colors rounded-full px-3 py-1"
-                        >
-                          {m.textShown ? "隐藏文字" : "转成文字"}
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </>
+              {message.role === "assistant" && message.usedMemories && message.usedMemories.length > 0 && (
+                <details className="mt-3 border-t border-white/5 pt-2 text-xs text-white/30">
+                  <summary className="cursor-pointer hover:text-white/50">
+                    本次参考了 {message.usedMemories.length} 条记忆
+                  </summary>
+                  <ul className="mt-2 space-y-1.5">
+                    {message.usedMemories.map((memory) => (
+                      <li key={memory.id || memory.content} className="leading-5">· {memory.content}</li>
+                    ))}
+                  </ul>
+                </details>
               )}
             </div>
           </div>
         ))}
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-white/5 rounded-2xl px-4 py-3 text-sm text-white/30 animate-pulse">
-              ...
+
+        {phaseView.side && (
+          <div className={`flex ${phaseView.side === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`rounded-2xl px-4 py-3 text-sm animate-pulse ${
+              phaseView.side === "user"
+                ? "bg-red-500/15 border border-red-400/20 text-red-100/70"
+                : "bg-white/5 text-white/30"
+            }`}>
+              {phaseView.label}
             </div>
           </div>
         )}
       </div>
 
-      {/* 输入区 */}
-      <div className="border-t border-white/10 px-6 py-4 flex items-end gap-3">
-        {/* 语音按钮 */}
+      {interactionError && (
+        <div role="status" className="shrink-0 px-8 pb-2 text-center text-xs text-amber-200/60">{interactionError}</div>
+      )}
+
+      <div className="shrink-0 border-t border-white/10 px-8 py-5 flex items-end gap-3">
         <button
-          onMouseDown={startRecording}
-          onMouseUp={stopRecording}
-          onMouseLeave={stopRecording}
-          onTouchStart={startRecording}
-          onTouchEnd={stopRecording}
-          disabled={loading}
-          className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all ${
-            recording
+          type="button"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            void startRecording();
+          }}
+          onPointerUp={stopRecording}
+          onPointerCancel={stopRecording}
+          disabled={phase !== "idle" && phase !== "recording"}
+          className={`touch-none shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+            phase === "recording"
               ? "bg-red-500/80 scale-110 animate-pulse"
-              : "bg-white/10 hover:bg-white/20"
+              : "bg-white/10 hover:bg-white/20 disabled:opacity-30"
           }`}
           title="按住说话"
+          aria-label="按住说话"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
@@ -295,20 +359,29 @@ export default function ChatPage() {
           </svg>
         </button>
 
-        {/* 文字输入 */}
         <input
+          aria-label="消息内容"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(event) => setInput(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={recording ? "正在录音..." : "输入消息，Enter 发送"}
-          disabled={loading || recording}
-          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-white/30 transition-colors disabled:opacity-30"
+          placeholder={
+            phase === "recording"
+              ? "你正在说话…"
+              : phase === "transcribing"
+                ? "正在识别你的语音…"
+                : phase === "replying"
+                  ? "正在生成回复…"
+                  : "输入消息，Enter 发送"
+          }
+          disabled={busy}
+          className="min-w-0 flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-white/30 transition-colors disabled:opacity-30"
         />
 
-        {/* 发送按钮 */}
         <button
-          onClick={handleSendText}
-          disabled={loading || !input.trim()}
+          type="button"
+          onClick={() => void handleSendText()}
+          aria-label="发送消息"
+          disabled={busy || !input.trim()}
           className="shrink-0 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center disabled:opacity-20 transition-all"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

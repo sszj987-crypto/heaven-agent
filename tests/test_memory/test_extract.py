@@ -97,7 +97,7 @@ class TestPromptFormat:
         ]
         prompt = module._build_prompt("小红", history)
         assert "你好吗" in prompt
-        assert "我很好" in prompt
+        assert "我很好" not in prompt
 
     def test_build_prompt_empty_history(self):
         module = MemoryExtractModule()
@@ -110,6 +110,17 @@ class TestPromptFormat:
         history = [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "你好"}]
         prompt = module._build_prompt("小明", history)
         assert "宁可漏过" in prompt
+
+    def test_build_prompt_does_not_treat_assistant_reply_as_fact_source(self):
+        module = MemoryExtractModule()
+        prompt = module._build_prompt("小明", [
+            {"role": "user", "content": "奶奶以前每年中秋都会做桂花糕"},
+            {"role": "assistant", "content": "我年轻时还开过一家糕点铺"},
+        ])
+
+        assert "每年中秋都会做桂花糕" in prompt
+        assert "开过一家糕点铺" not in prompt
+        assert "模型回复不能作为人物事实来源" in prompt
 
 
 class TestParseResult:
@@ -211,3 +222,37 @@ class TestAppendDimension:
         saved = loader.load_dimension("personal_traits")
         assert "喜欢画画" in saved
         assert "擅长烹饪" in saved
+
+
+class TestCandidatePersistence:
+    def test_extracted_facts_are_queued_instead_of_written_to_profile(self):
+        module = MemoryExtractModule()
+
+        class FakeCandidates:
+            def __init__(self):
+                self.items = []
+
+            def add(self, **item):
+                self.items.append(item)
+
+        class GuardLoader:
+            def save_dimension(self, *_args):
+                raise AssertionError("candidate must not be written before approval")
+
+        candidates = FakeCandidates()
+        module._loader = GuardLoader()
+        module._candidates = candidates
+
+        count = module._persist_candidates(
+            [{"dimension": "personal_traits", "content": "喜欢钓鱼", "confidence": 0.8}],
+            source_excerpt="对方说奶奶喜欢钓鱼",
+        )
+
+        assert count == 1
+        assert candidates.items == [{
+            "dimension": "personal_traits",
+            "content": "喜欢钓鱼",
+            "source_type": "conversation",
+            "source_excerpt": "对方说奶奶喜欢钓鱼",
+            "confidence": 0.8,
+        }]

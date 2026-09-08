@@ -15,20 +15,29 @@ class TestQualityCheckModule:
         assert not ctx.need_regenerate
 
     @pytest.mark.asyncio
-    async def test_detect_as_ai(self):
+    async def test_honest_ai_disclosure_is_not_rejected(self):
+        ctx = PipelineContext(user_message="你真的是奶奶吗")
+        ctx.response = "不是。作为AI人物模拟，我只能基于你提供的资料回应，内容也可能不准确。"
+
+        ctx = await self._module.process(ctx)
+
+        assert ctx.need_regenerate is False
+
+    @pytest.mark.asyncio
+    async def test_allow_as_ai_disclosure(self):
         ctx = PipelineContext(user_message="你是谁")
         ctx.response = "作为AI，我会尽力帮助你。"
         ctx.llm_messages = [{"role": "system", "content": "..."}]
         ctx = await self._module.process(ctx)
-        assert ctx.need_regenerate is True
+        assert ctx.need_regenerate is False
 
     @pytest.mark.asyncio
-    async def test_detect_language_model(self):
+    async def test_allow_language_model_disclosure(self):
         ctx = PipelineContext(user_message="hi")
-        ctx.response = "我是语言模型，无法感知情感。"
+        ctx.response = "我是语言模型，因此回答只能基于你提供的资料。"
         ctx.llm_messages = [{"role": "system", "content": "..."}]
         ctx = await self._module.process(ctx)
-        assert ctx.need_regenerate is True
+        assert ctx.need_regenerate is False
 
     @pytest.mark.asyncio
     async def test_detect_no_emotion(self):
@@ -41,7 +50,7 @@ class TestQualityCheckModule:
     @pytest.mark.asyncio
     async def test_appends_warning_messages(self):
         ctx = PipelineContext(user_message="你是谁")
-        ctx.response = "作为AI..."
+        ctx.response = "我没有情感，所以不能回应。"
         ctx.llm_messages = [{"role": "system", "content": "system_prompt"}]
         ctx = await self._module.process(ctx)
 

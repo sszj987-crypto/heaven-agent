@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import pytest
 from src.voice.asr import ASRService, MockASRService
 
@@ -10,15 +10,15 @@ class TestASRService:
     @pytest.mark.asyncio
     async def test_transcribe_returns_text(self):
         mock_result = {"text": "奶奶你好"}
-        with patch("mlx_whisper.transcribe", return_value=mock_result):
-            result = await self._asr.transcribe(b"fake audio data")
+        self._asr._transcribe_fn = MagicMock(return_value=mock_result)
+        result = await self._asr.transcribe(b"fake audio data")
         assert result == "奶奶你好"
 
     @pytest.mark.asyncio
     async def test_transcribe_empty_response(self):
         mock_result = {"text": ""}
-        with patch("mlx_whisper.transcribe", return_value=mock_result):
-            result = await self._asr.transcribe(b"data")
+        self._asr._transcribe_fn = MagicMock(return_value=mock_result)
+        result = await self._asr.transcribe(b"data")
         assert result == ""
 
 

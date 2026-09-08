@@ -59,13 +59,20 @@ class SoulDistiller:
 
     # ── 公开接口 ──────────────────────────────────────────
 
-    async def distill(self, raw_chat_text: str, chat_name: str = "") -> DistillResult:
+    async def distill(
+        self,
+        raw_chat_text: str,
+        chat_name: str = "",
+        *,
+        apply_changes: bool = True,
+    ) -> DistillResult:
         """
         分析聊天记录、更新灵魂档案 + 提取行为规则。
 
         Args:
             raw_chat_text: 原始聊天记录（微信/QQ 导出格式）
             chat_name: 目标人物在聊天记录中显示的名字（为空时使用档案姓名自动匹配）
+            apply_changes: 是否立即写入。导入预览必须传 False，待人工确认后再保存。
 
         Raises:
             ValueError: 聊天记录为空
@@ -92,7 +99,9 @@ class SoulDistiller:
 
         # Phase 1: 事实提取（使用精炼文本）
         new_dimensions, summary = await self._call_llm_phase1(profile, refined_text)
-        changes = self._save_changes(profile, new_dimensions)
+        changes = self._find_changes(profile, new_dimensions)
+        if apply_changes:
+            self._save_changes(profile, new_dimensions)
 
         # Phase 2: 女娲式多维度并行行为规则提取（使用差异化采样）
         existing_skill = self._loader.load_skill()
@@ -101,7 +110,7 @@ class SoulDistiller:
             preprocessed, existing_skill, soul_name=profile.name)
 
         # 保存 Skill Card
-        if skill_card and skill_card.has_content:
+        if apply_changes and skill_card and skill_card.has_content:
             self._loader.save_skill(skill_card)
 
         if skill_card and skill_card.has_content:
@@ -146,13 +155,12 @@ class SoulDistiller:
                 f"LLM 调用失败（已重试 {self._max_retries} 次）: {last_error}"
             ) from last_error
 
-        log.debug("LLM 原始响应 (%d chars): %s",
-                  len(raw_response), raw_response[:500])
+        log.debug("LLM 蒸馏响应已接收, len=%d", len(raw_response))
 
         try:
             return self._parse_response(raw_response)
         except Exception as e:
-            log.error("蒸馏响应解析失败: %s\nraw=%s", e, raw_response[:1000])
+            log.error("蒸馏响应解析失败: %s, response_len=%d", e, len(raw_response))
             raise RuntimeError(f"LLM 响应解析失败: {e}") from e
 
     # ── 保存变更 ──────────────────────────────────────────
@@ -172,6 +180,17 @@ class SoulDistiller:
                 except Exception as e:
                     log.error("保存维度 %s 失败: %s", dim, e)
         return changes
+
+    @staticmethod
+    def _find_changes(profile, new_dimensions: dict[str, str]) -> list[str]:
+        """返回实际有差异的维度，不执行任何文件写入。"""
+        return [
+            dim
+            for dim in DIMENSION_NAMES
+            if new_dimensions.get(dim, "").strip()
+            and new_dimensions[dim].strip()
+            != profile.dimensions.get(dim, "").strip()
+        ]
 
     @staticmethod
     def _merge_profile(profile, new_dimensions: dict[str, str]) -> dict[str, str]:

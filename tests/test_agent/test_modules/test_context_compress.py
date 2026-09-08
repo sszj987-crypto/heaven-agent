@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 from src.agent.context import PipelineContext
 from src.agent.modules.postoutput.context_compress import ContextCompressModule
 
@@ -31,13 +31,18 @@ class TestContextCompressModule:
 
     @pytest.mark.asyncio
     async def test_triggers_compress_at_interval(self):
-        """在间隔轮数（10 的倍数）时触发压缩。"""
+        """压缩必须在当前回合内完成，避免后台任务覆盖后续消息。"""
         self._mock_messages.conversation_turns = 10  # _crunch_interval default
+        self._mock_messages.conversation = [
+            {"role": "user", "content": f"msg-{index}"}
+            for index in range(8)
+        ]
         ctx = PipelineContext(user_message="hi")
 
-        with patch("asyncio.create_task") as mock_create_task:
-            await self._module.process(ctx)
-            mock_create_task.assert_called_once()
+        await self._module.process(ctx)
+
+        self._mock_llm.chat.assert_awaited_once()
+        self._mock_messages.compress_conversation.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_skips_when_already_compressing(self):
@@ -46,9 +51,8 @@ class TestContextCompressModule:
         self._mock_messages.conversation_turns = 10  # _crunch_interval default
         ctx = PipelineContext(user_message="hi")
 
-        with patch("asyncio.create_task") as mock_create_task:
-            await self._module.process(ctx)
-            mock_create_task.assert_not_called()
+        await self._module.process(ctx)
+        self._mock_llm.chat.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_compress_calls_llm_with_conversation(self):

@@ -3,9 +3,14 @@
 检索结果注入 PipelineContext.retrieved_memories，供 SoulContextModule 拼入 prompt。
 """
 
+from __future__ import annotations
+
 from ..base import PipelineModule
 from ...context import PipelineContext
-from ....memory.store import MemoryStore
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ....memory.store import MemoryStore
 from ....config.logger import get_logger
 
 log = get_logger("memory_retrieve")
@@ -20,7 +25,7 @@ class MemoryRetrieveModule(PipelineModule):
     _top_k: int = DEFAULT_TOP_K
 
     @classmethod
-    def set_deps(cls, store: MemoryStore, top_k: int = DEFAULT_TOP_K):
+    def set_deps(cls, store: "MemoryStore | Any", top_k: int = DEFAULT_TOP_K):
         cls._store = store
         cls._top_k = top_k
 

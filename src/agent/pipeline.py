@@ -2,6 +2,7 @@ from .context import PipelineContext
 from ..config.logger import get_logger
 
 log = get_logger("pipeline")
+_UNSET = object()
 
 
 class Pipeline:
@@ -65,13 +66,22 @@ class Pipeline:
         log.info("── PostOutput 阶段完成 ──")
         return ctx
 
-    @classmethod
-    def init_deps(cls, message_manager):
-        """一次性初始化所有 Pipeline 模块的依赖（在 AgentLoop 构造时调用）。"""
+    def init_deps(
+        self,
+        message_manager,
+        *,
+        llm_client=None,
+        soul_loader=None,
+        memory_store=_UNSET,
+        candidate_store=None,
+        memory_root=None,
+        settings=None,
+        job_manager=None,
+    ):
+        """初始化当前 Pipeline 实例的依赖，避免不同 Soul 共享类级状态。"""
         from ..config.settings import Settings
         from ..llm.manager import get_llm_client
         from ..soul.loader import get_soul_loader
-        from ..memory.store import get_memory_store
         from .modules.prellm.circumstances import CircumstancesModule
         from .modules.prellm.soul_context import SoulContextModule
         from .modules.prellm.memory_retrieve import MemoryRetrieveModule
@@ -79,22 +89,61 @@ class Pipeline:
         from .modules.postoutput.memory_persist import MemoryPersistModule
         from .modules.postoutput.memory_extract import MemoryExtractModule
 
-        llm_client = get_llm_client()
-        soul_loader = get_soul_loader()
-        memory_store = get_memory_store()
-        settings = Settings.get()
+        llm_client = llm_client or get_llm_client()
+        soul_loader = soul_loader or get_soul_loader()
+        if memory_store is _UNSET:
+            from ..memory.store import get_memory_store
+            memory_store = get_memory_store()
+        settings = settings or Settings.get()
         circumstances = settings.circumstances
 
-        CircumstancesModule.update(circumstances)
-        SoulContextModule.set_deps(soul_loader, message_manager)
-        ContextCompressModule.set_deps(llm_client, message_manager)
-        ContextCompressModule.configure(
-            crunch_interval=settings.crunch_interval,
-            keep_recent=settings.compress_keep_recent,
-        )
-        MemoryPersistModule.set_deps(message_manager)
-        MemoryExtractModule.configure(crunch_interval=settings.crunch_interval)
-        if memory_store:
-            MemoryRetrieveModule.set_deps(memory_store)
-            ContextCompressModule.set_deps(llm_client, message_manager, memory_store)
-            MemoryExtractModule.set_deps(llm_client, message_manager, soul_loader)
+        modules = [*self._prellm, *self._postllm, *self._postoutput]
+        by_type = {type(module): module for module in modules}
+
+        circumstances_module = by_type[CircumstancesModule]
+        circumstances_module._circumstances = circumstances
+
+        soul_module = by_type[SoulContextModule]
+        soul_module._loader = soul_loader
+        soul_module._messages = message_manager
+        soul_module._builder = None
+
+        retrieve_module = by_type[MemoryRetrieveModule]
+        retrieve_module._store = memory_store
+
+        compress_module = by_type[ContextCompressModule]
+        compress_module._llm = llm_client
+        compress_module._messages = message_manager
+        compress_module._store = memory_store
+        compress_module._crunch_interval = settings.crunch_interval
+        compress_module._keep_recent = settings.compress_keep_recent
+        compress_module._job_manager = job_manager
+
+        persist_module = by_type[MemoryPersistModule]
+        persist_module._messages = message_manager
+        if memory_root is not None:
+            persist_module._memory_root = memory_root
+
+        extract_module = by_type[MemoryExtractModule]
+        extract_module._llm = llm_client
+        extract_module._messages = message_manager
+        extract_module._loader = soul_loader
+        extract_module._candidates = candidate_store
+        extract_module._crunch_interval = settings.crunch_interval
+        extract_module._job_manager = job_manager
+
+    def update_llm_client(self, client) -> None:
+        for module in [*self._prellm, *self._postllm, *self._postoutput]:
+            if hasattr(module, "_llm"):
+                module._llm = client
+
+    def invalidate_soul_cache(self) -> None:
+        for module in self._prellm:
+            if module.__class__.__name__ == "SoulContextModule":
+                module._cached_prompt = None
+                module._builder = None
+
+    def update_circumstances(self, circumstances: str) -> None:
+        for module in self._prellm:
+            if module.__class__.__name__ == "CircumstancesModule":
+                module._circumstances = circumstances

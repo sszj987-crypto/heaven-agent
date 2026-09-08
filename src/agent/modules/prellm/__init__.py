@@ -1,4 +1,5 @@
-from . import circumstances
-from . import emotion_detect
-from . import memory_retrieve
-from . import soul_context
+"""Pre-LLM pipeline modules.
+
+Modules are imported by the pipeline registry. Keeping this package initializer
+empty avoids loading optional vector dependencies when testing unrelated stages.
+"""

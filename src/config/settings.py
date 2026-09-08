@@ -1,6 +1,9 @@
 import json
+import threading
+from copy import deepcopy
 from pathlib import Path
 from .loader import ConfigLoader, AppConfig
+from ..data.files import atomic_write_text
 
 
 class Settings:
@@ -12,6 +15,7 @@ class Settings:
         self._config_dir = Path(config_dir)
         self._loader = ConfigLoader(self._config_dir)
         self._config: AppConfig = self._loader.load()
+        self._write_lock = threading.RLock()
         self._circumstances: str = ""
         self._log_level: str = "error"
         self._load_circumstances()
@@ -35,12 +39,24 @@ class Settings:
         return self._config.llm
 
     @property
+    def tts(self):
+        return self._config.tts
+
+    @property
     def soul_path(self) -> Path:
         return self._config_dir.parent / self._config.soul_path
 
     @property
     def data_dir(self) -> Path:
         return self._config_dir
+
+    @property
+    def soul_id(self) -> str:
+        return self._config.soul_id
+
+    @property
+    def data_root(self) -> Path:
+        return self._config_dir.parent / self._config.data_root
 
     @property
     def circumstances(self) -> str:
@@ -96,27 +112,58 @@ class Settings:
 
     def update_llm(self, **kwargs):
         """更新 LLM 配置并写回 JSON 文件"""
-        for key, value in kwargs.items():
-            if hasattr(self._config.llm, key):
-                setattr(self._config.llm, key, value)
-        self._save_json("llm.json", self._config.llm)
+        with self._write_lock:
+            for key, value in kwargs.items():
+                # GET /settings 不返回真实密钥；旧前端可能把掩码原样提交回来。
+                if key == "api_key" and value in (None, "***"):
+                    continue
+                if value is not None and hasattr(self._config.llm, key):
+                    setattr(self._config.llm, key, value)
+            self._save_json("llm.json", self._config.llm)
+
+    def update_tts(
+        self,
+        provider: str | None = None,
+        minimax: dict[str, object] | None = None,
+    ) -> None:
+        """更新 TTS 配置并写回 JSON 文件。"""
+        with self._write_lock:
+            candidate = deepcopy(self._config.tts)
+
+            if provider is not None:
+                candidate.provider = provider
+            if candidate.provider not in ("local", "minimax"):
+                raise ValueError("不支持的语音服务")
+
+            if minimax is not None:
+                for key in ("base_url", "api_key", "model"):
+                    if key in minimax:
+                        setattr(candidate.minimax, key, minimax[key])
+
+            self._save_json("tts.json", candidate)
+            self._config.tts = candidate
 
     def update_circumstances(self, content: str):
         """更新场景描述并写回 circumstances.md"""
         self._circumstances = content
         path = self._config_dir / "circumstances.md"
-        path.write_text(content)
+        atomic_write_text(path, content)
 
     def _save_json(self, filename: str, dataclass_instance):
         from dataclasses import asdict
         path = self._config_dir / filename
-        path.write_text(json.dumps(asdict(dataclass_instance), indent=2, ensure_ascii=False))
+        atomic_write_text(
+            path,
+            json.dumps(asdict(dataclass_instance), indent=2, ensure_ascii=False),
+        )
 
     def _save_app_json(self):
         """保存 app.json 中的运行时设置"""
         path = self._config_dir / "app.json"
         data = {
             "soul_path": self._config.soul_path,
+            "soul_id": self._config.soul_id,
+            "data_root": self._config.data_root,
             "log_level": self._log_level,
             "frontend_origin": self._config.frontend_origin,
             "pipeline": {
@@ -129,4 +176,4 @@ class Settings:
                 "max_retries": self._config.distill_max_retries,
             },
         }
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False))

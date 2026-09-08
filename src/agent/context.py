@@ -34,3 +34,4 @@ class PipelineContext:
     response: str = ""
     instruct_text: str = ""
     need_regenerate: bool = False
+    safety_state: str = "normal"

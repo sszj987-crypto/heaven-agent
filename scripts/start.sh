@@ -25,11 +25,14 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-echo "===== 启动 VoiceFromHeaven ====="
+echo "===== 启动 Heaven Agent ====="
+
+# 首次运行或依赖清单变化时自动创建/修复环境并安装核心依赖。
+python3 "$ROOT/scripts/bootstrap.py" || exit 1
 
 # 启动后端 (FastAPI)
 cd "$ROOT"
-.venv/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8326 >> "$LOG_DIR/backend.log" 2>&1 &
+.venv/bin/python -m uvicorn src.main:app --host 127.0.0.1 --port 8326 >> "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "后端已启动 (PID: $BACKEND_PID, port: 8326)，等待就绪..."
 
@@ -39,7 +42,7 @@ for i in $(seq 1 60); do
         echo "后端就绪 (耗时 ${i}s)"
         break
     fi
-    if [ $i -eq 60 ]; then
+    if [ "$i" -eq 60 ]; then
         echo "后端启动超时，请检查日志: $LOG_DIR/backend.log"
         exit 1
     fi
@@ -56,7 +59,7 @@ echo "$BACKEND_PID" > "$PID_FILE"
 echo "$FRONTEND_PID" >> "$PID_FILE"
 
 echo ""
-echo "===== VoiceFromHeaven 已启动 ====="
+echo "===== Heaven Agent 已启动 ====="
 echo "  前端: http://localhost:3326"
 echo "  后端: http://localhost:8326"
 echo "  日志: $LOG_DIR/"

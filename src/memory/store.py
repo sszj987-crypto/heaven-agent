@@ -216,6 +216,15 @@ class MemoryStore:
             log.info("记忆维度已清空, dim=%s, deleted=%d", dimension, len(ids))
         return len(existing)
 
+    def clear(self) -> int:
+        """Clear the rebuildable active collection without moving its open database."""
+        result = self._collection.get(include=[])
+        ids = result.get("ids") or []
+        if ids:
+            self._collection.delete(ids=ids)
+        log.info("记忆索引已清空, deleted=%d", len(ids))
+        return len(ids)
+
     def upsert_dimension(self, dimension: str, entries: list[dict]) -> int:
         """全量刷新某个维度的记忆（先删后加）。返回新增条数。"""
         self.delete_by_dimension(dimension)

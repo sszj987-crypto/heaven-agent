@@ -24,6 +24,7 @@ class ContextCompressModule(PipelineModule):
     _compressing: bool = False
     _crunch_interval: int = 10
     _keep_recent: int = 6
+    _job_manager = None
 
     @classmethod
     def set_deps(cls, llm_client, message_manager, store=None):
@@ -47,12 +48,13 @@ class ContextCompressModule(PipelineModule):
             return ctx
 
         log.info("触发上下文压缩, turns=%d, 总消息=%d", turns, len(self._messages.get_all()))
-        import asyncio
-        asyncio.create_task(self._compress())
+        # Must finish under AgentLoop's turn lock; a background mutation could
+        # otherwise discard turns added while the summary LLM call is running.
+        await self._compress()
         return ctx
 
     async def _compress(self):
-        self.__class__._compressing = True
+        self._compressing = True
         try:
             conv = self._messages.conversation
             if len(conv) <= self._keep_recent:
@@ -87,4 +89,4 @@ class ContextCompressModule(PipelineModule):
         except Exception as e:
             log.error("上下文压缩失败: %s", e)
         finally:
-            self.__class__._compressing = False
+            self._compressing = False

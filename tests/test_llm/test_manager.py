@@ -1,6 +1,6 @@
 import pytest
-from unittest.mock import MagicMock, patch
-from src.llm.manager import LLMManager
+from unittest.mock import AsyncMock, MagicMock, patch
+from src.llm.manager import LLMManager, replace_llm_client
 from src.config.loader import LLMConfig
 
 
@@ -51,3 +51,26 @@ class TestLLMManager:
         with patch("httpx.AsyncClient.get", side_effect=Exception("Connection refused")):
             result = await LLMManager.test_connection(config)
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_replace_llm_client_closes_previous_client(self):
+        old = MagicMock()
+        old.aclose = AsyncMock()
+        config = LLMConfig(base_url="https://new.test/v1", api_key="new", model="new-model")
+
+        with patch("src.llm.manager._llm_client", old):
+            new_client = await replace_llm_client(config)
+
+        old.aclose.assert_awaited_once()
+        assert new_client.model == "new-model"
+
+
+def test_get_client_rejects_non_http_base_url():
+    config = LLMConfig(
+        base_url="not-a-url",
+        api_key="secret",
+        model="test-model",
+    )
+
+    with pytest.raises(ValueError, match="HTTP"):
+        LLMManager.get_client(config)

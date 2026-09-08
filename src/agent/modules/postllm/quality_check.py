@@ -8,10 +8,10 @@ log = get_logger("quality_check")
 class QualityCheckModule(PipelineModule):
     """输出质量检查：检测回复文本和语音语气中的禁忌词/极端词，触发 LLM 重新生成"""
 
-    # 回复文本禁忌：打破角色扮演
+    # 只拦截冷漠、推脱式措辞；AI 身份披露本身必须允许。
     _FORBIDDEN_REPLY = [
-        "作为AI", "作为人工智能", "我是语言模型", "我无法感知",
-        "我没有情感", "作为助手", "AI助手", "语言模型",
+        "我无法感知",
+        "我没有情感",
     ]
 
     # 语音语气禁忌：极端激烈词汇
@@ -37,7 +37,7 @@ class QualityCheckModule(PipelineModule):
                     "content": (
                         "[内部警告] 上一轮回复触发了设定约束。"
                         "请完全忽略上一段回复，换个说法重新表达，"
-                        "不要出现'作为AI''语言模型''无法感知'等表述。"
+                        "避免用'没有情感''无法感知'等冷漠措辞推脱回应。"
                     ),
                 })
                 ctx.llm_messages.append({"role": "user", "content": ctx.user_message})

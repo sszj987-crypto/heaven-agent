@@ -1,23 +1,17 @@
 [project]
 name = "voicefromheaven"
-version = "0.1.0"
-description = "让思念有回响 — 为失去挚爱之人提供跨越生死对话的 AI Agent"
-requires-python = ">=3.11"
+version = "0.2.0"
+description = "本地优先、可审阅事实来源的 AI 人物模拟与纪念对话应用"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "httpx>=0.27.0",
     "python-multipart>=0.0.9",
-    "sse-starlette>=2.1.0",
-    "mlx-audio-plus>=0.1.8",
-    "soundfile>=0.12.0",
-    "scipy>=1.10.0",
-    "pyloudnorm>=0.1.0",
-    "numpy<2.0",
-    "torch>=2.0.0",
+    "numpy>=1.26,<2.0; python_version < '3.13'",
+    "numpy>=2.1,<3.0; python_version >= '3.13'",
     "chromadb>=1.5.0",
     "sentence-transformers>=3.0.0",
-    "faster-whisper>=1.1.0",
 ]
 
 [project.optional-dependencies]
@@ -26,9 +20,28 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "httpx>=0.27.0",
 ]
-official-tts = [
+voice-macos = [
+    # mlx-audio-plus is installed with --no-deps; S3Tokenizer needs einops.
+    "einops>=0.8.1",
+    "mlx>=0.25.2",
+    "huggingface-hub>=0.27.0,<1.0",
+    "transformers>=4.49.0,<5.0.0",
+    "hf-transfer>=0.1.9",
+    "mlx-lm>=0.18.0,<0.30.0",
+    "mlx-whisper>=0.4.2",
+    "tqdm>=4.67.1",
+    "sounddevice>=0.5.1",
+    "soundfile>=0.13.1",
+    "pyloudnorm>=0.1.1",
+    "librosa==0.11.0",
+    "scipy>=1.10.0",
+]
+voice-cross-platform = [
+    "faster-whisper>=1.1.0",
+    "torch>=2.3.0",
     "torchaudio>=2.0.0",
     "soundfile>=0.12.0",
+    "scipy>=1.10.0",
     "onnxruntime>=1.15.0",
     "modelscope>=1.27.0",
     "hyperpyyaml>=1.2.0",
@@ -36,6 +49,14 @@ official-tts = [
     "zhconv>=1.4.0",
 ]
 
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]

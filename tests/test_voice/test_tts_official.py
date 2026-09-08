@@ -18,6 +18,7 @@ class TestOfficialTTSService:
             svc = OfficialTTSService(data_dir)
             assert data_dir.exists()
             assert svc.has_reference is False
+            assert svc.supports_instruction is False
 
     def test_has_reference_without_audio(self):
         from src.voice.tts_official import OfficialTTSService

@@ -23,9 +23,10 @@ class TestSoulPromptBuilder:
 
     def test_build_contains_heaven_rules(self):
         prompt = self._builder.build(self._profile, "")
-        assert "你不是AI" in prompt
-        assert "我是语言模型" in prompt
-        assert "特殊的线路" in prompt
+        assert "人物模拟" in prompt
+        assert "你不是AI" not in prompt
+        assert "绝不声称自己是真实逝者" in prompt
+        assert "数字纪念体验" in prompt
 
     def test_build_contains_dimension_content(self):
         prompt = self._builder.build(self._profile, "")
@@ -54,3 +55,21 @@ class TestSoulPromptBuilder:
         prompt = self._builder.build(empty, "")
         # 应不抛出异常
         assert len(prompt) > 0
+
+    def test_unknown_facts_require_uncertainty_instead_of_invention(self):
+        prompt = self._builder.build(self._profile, "")
+
+        assert "资料没有明确提供" in prompt
+        assert "不要编造" in prompt
+
+    def test_conflicting_facts_must_be_surfaced_without_guessing(self):
+        prompt = self._builder.build(self._profile, "")
+
+        assert "资料互相冲突" in prompt
+        assert "不要擅自选择" in prompt
+
+    def test_reply_contract_requests_tts_instruction(self):
+        prompt = self._builder.build(self._profile, "")
+
+        assert '"instruct"' in prompt
+        assert "语气" in prompt

@@ -18,7 +18,6 @@ import wave as wav_mod
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 
 from ..agent.context import TTSConfig
 from ..config.logger import get_logger
@@ -117,6 +116,11 @@ class OfficialTTSService:
     def has_reference(self) -> bool:
         return self._ref_audio_path.exists()
 
+    @property
+    def supports_instruction(self) -> bool:
+        """The zero-shot PyTorch backend cannot consume per-turn instructions."""
+        return False
+
     def save_reference_audio(self, audio_bytes: bytes) -> None:
         """保存用户上传的参考音频，统一转为 24kHz 单声道 WAV"""
         import subprocess
@@ -144,6 +148,7 @@ class OfficialTTSService:
         except (subprocess.CalledProcessError, FileNotFoundError):
             log.warning("ffmpeg 不可用，使用 soundfile 转换格式")
             try:
+                import soundfile as sf
                 data, sr = sf.read(str(raw_path))
                 if data.ndim > 1:
                     data = data.mean(axis=1)
@@ -179,16 +184,20 @@ class OfficialTTSService:
                  self._ref_audio_path, len(final_bytes), final_hash)
 
         # 参考音频质量校验
-        ref_data, _ = sf.read(str(self._ref_audio_path))
-        rms = float(np.sqrt(np.mean(ref_data ** 2)))
-        peak = float(np.max(np.abs(ref_data)))
-        duration = len(ref_data) / SAMPLE_RATE
-        if duration < 3.0:
-            log.warning("参考音频时长偏短 (%.1fs)，建议使用 5-15 秒清晰语音", duration)
-        if peak > 0 and rms > 0:
-            snr_est = 20 * np.log10(peak / rms)
-            if snr_est < 15:
-                log.warning("参考音频信噪比可能偏低 (%.1fdB)，声音克隆质量可能受影响", snr_est)
+        try:
+            import soundfile as sf
+            ref_data, _ = sf.read(str(self._ref_audio_path))
+            rms = float(np.sqrt(np.mean(ref_data ** 2)))
+            peak = float(np.max(np.abs(ref_data)))
+            duration = len(ref_data) / SAMPLE_RATE
+            if duration < 3.0:
+                log.warning("参考音频时长偏短 (%.1fs)，建议使用 5-15 秒清晰语音", duration)
+            if peak > 0 and rms > 0:
+                snr_est = 20 * np.log10(peak / rms)
+                if snr_est < 15:
+                    log.warning("参考音频信噪比可能偏低 (%.1fdB)，声音克隆质量可能受影响", snr_est)
+        except ImportError:
+            log.debug("soundfile 未安装，跳过参考音频质量诊断")
 
     async def speak(self, text: str, config: TTSConfig | None = None) -> list[bytes]:
         """
@@ -223,9 +232,9 @@ class OfficialTTSService:
             if item is None:
                 break
             if isinstance(item, Exception):
-                log.error("TTS 生成失败: %s", item, exc_info=True)
-                yield b""
-                return
+                log.error("TTS 生成失败: %s", item,
+                          exc_info=(type(item), item, item.__traceback__))
+                raise item
             audio_array = item
 
         if audio_array is None or audio_array.shape[0] == 0:

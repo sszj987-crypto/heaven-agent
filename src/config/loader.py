@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 @dataclass
@@ -12,10 +13,26 @@ class LLMConfig:
 
 
 @dataclass
+class MiniMaxConfig:
+    base_url: str = "https://api.minimaxi.com"
+    api_key: str = ""
+    model: str = "speech-2.8-hd"
+
+
+@dataclass
+class VoiceProviderConfig:
+    provider: Literal["local", "minimax"] = "local"
+    minimax: MiniMaxConfig = field(default_factory=MiniMaxConfig)
+
+
+@dataclass
 class AppConfig:
     # === 全局 ===
     llm: LLMConfig = field(default_factory=LLMConfig)
+    tts: VoiceProviderConfig = field(default_factory=VoiceProviderConfig)
     soul_path: str = "config/souls/demo"
+    soul_id: str = "default"
+    data_root: str = "data"
     frontend_origin: str = "http://localhost:3326"
 
     # === Pipeline 模块 ===
@@ -42,10 +59,29 @@ class ConfigLoader:
             llm_data = json.loads(llm_path.read_text())
             config.llm = LLMConfig(**llm_data)
 
+        tts_path = self._config_dir / "tts.json"
+        if tts_path.exists():
+            tts_data = json.loads(tts_path.read_text())
+            provider = tts_data.get("provider", config.tts.provider)
+            if provider not in ("local", "minimax"):
+                raise ValueError("不支持的语音服务")
+
+            minimax_data = tts_data.get("minimax", {})
+            config.tts = VoiceProviderConfig(
+                provider=provider,
+                minimax=MiniMaxConfig(
+                    base_url=minimax_data.get("base_url", config.tts.minimax.base_url),
+                    api_key=minimax_data.get("api_key", config.tts.minimax.api_key),
+                    model=minimax_data.get("model", config.tts.minimax.model),
+                ),
+            )
+
         app_path = self._config_dir / "app.json"
         if app_path.exists():
             app_data = json.loads(app_path.read_text())
             config.soul_path = app_data.get("soul_path", config.soul_path)
+            config.soul_id = app_data.get("soul_id", config.soul_id)
+            config.data_root = app_data.get("data_root", config.data_root)
             config.frontend_origin = app_data.get("frontend_origin", config.frontend_origin)
 
             pipeline = app_data.get("pipeline", {})

@@ -1,254 +1,199 @@
-# VoiceFromHeaven
+# Heaven Agent
 
-> 让思念有回响 — 为失去挚爱之人提供跨越生死对话的 AI Agent
+Heaven Agent 是一个本地优先的 AI 人物模拟与纪念对话应用。它使用六维 Markdown 档案、可审阅的记忆候选、可重建的向量索引，以及按需安装的 ASR/TTS。产品会明确标识 AI 模拟；模型生成的回复不会被自动固化为人物事实。
 
-通过多维度灵魂档案 + 语义记忆系统构建逝者完整的数字人格，驱动真实、有温度的语音对话。
+## 系统要求
 
-## 架构
+- Python 3.11–3.13（不支持 3.14）
+- Node.js 22+ 与 npm
+- macOS Apple Silicon 或 Windows 10/11
+- `ffmpeg`：文字模式不需要；语音模式强烈建议安装
+- 一个 OpenAI 兼容的 LLM 接口
 
-```
-前端 (Next.js :3326)  ──HTTP/SSE──▶  后端 (FastAPI :8326)
-                                           │
-     ┌──────────────────┬──────────────────┼──────────────────┬──────────────┐
-     │                  │                  │                  │              │
-     ▼                  ▼                  ▼                  ▼              ▼
-  CosyVoice3         LLM API           Soul 档案          ChromaDB        记忆落盘
-  (ASR + TTS)     (OpenAI 兼容)      (6 维 MD)          (向量检索)      (daily/*.md)
-```
+## 一条命令启动
 
-**Pipeline 处理流程（8 模块，三段式）：**
-
-```
-Input → PreLLM ─────────────────────────────────────────────────────────────────→ LLM → PostLLM → PostOutput → 语音/文本输出
-         │                                                                                    │
-         ├─ MemoryRetrieve  语义检索记忆                                                      ├─ QualityCheck  质检 + 重试
-         ├─ Circumstances   加载场景                                                          │
-         ├─ EmotionDetect   规则情绪检测 (~5ms)                                                └─ ContextCompress  上下文压缩
-         └─ SoulContext     构建 System Prompt                                                    MemoryPersist   日记落盘
-              (SoulProfile + SkillCard + 记忆 + 场景)                                              MemoryExtract   记忆提取
-```
-
-## 快速开始
-
-### macOS
+macOS / Linux shell：
 
 ```bash
-# 1. 安装依赖
-pip install -r requirements.txt
-
-# 2. 配置
-# 编辑 config/llm.json     — LLM API 地址和 Key
-# 编辑 config/app.json     — 应用配置（前端地址、日志级别等）
-# 编辑 config/souls/test/  — 灵魂档案（6 个维度 MD 文件）
-
-# 3. 启动
 ./scripts/start.sh
-
-# 4. 打开浏览器 → http://localhost:3326
-
-# 5. 停止
-./scripts/stop.sh
 ```
 
-### Windows
+Windows：
 
 ```powershell
-# 1. 安装依赖（需 Python 3.11+，Node 22+）
-pip install -r requirements.txt
-
-# 2. 安装 ffmpeg（下载后加入 PATH 或使用 winget）
-winget install ffmpeg
-
-# 3. 配置（同 macOS）
-# 编辑 config/llm.json
-
-# 4. 启动（Windows 自动使用 official TTS + faster-whisper ASR）
 scripts\start.bat
-
-# 5. 打开浏览器 → http://localhost:3326
-
-# 6. 停止
-scripts\stop.bat
 ```
 
-> **平台说明**：TTS 和 ASR 后端根据系统自动选择 — macOS 使用 MLX（Apple Silicon GPU 加速），Windows 自动切换为 PyTorch CPU 后端。
+启动脚本会检查 Python/Node，创建或修复 `.venv`，从 `pyproject.toml` 安装核心依赖并执行 `npm ci`。打开 <http://localhost:3326>，按四步引导完成“人物信息 → 导入确认 → 声音 → 对话”。首次建档会使用脱敏 demo 模板，不要求仓库中存在个人资料。
 
-首次启动后在设置页面填入 LLM API Key 并测试连接，即可开始对话。
+如果只想准备环境：
+
+```bash
+python3 scripts/bootstrap.py
+```
+
+核心安装完成后文字对话即可使用。语音依赖和模型不会被核心安装强制下载。
+
+## 按需安装语音
+
+进入“档案 → 语音音色”，当前状态为“语音组件未安装”时点击“安装语音组件”。安装在后台进行，完成后按页面提示重启 Heaven Agent；文字对话在安装期间仍可使用。模型下载支持断点续传。
+
+也可以使用命令行安装：
+
+```bash
+python3 scripts/bootstrap.py --voice
+```
+
+- macOS Apple Silicon：MLX ASR/TTS
+- 其他平台：faster-whisper + 固定提交版本的 CosyVoice PyTorch 后端
+- Apple Silicon 模型会在安装时下载并校验；其他平台模型在首次使用时按需下载。安装前请预留磁盘空间
+
+安装命令只输出当前阶段，不再持续打印 pip 解析过程。未安装、未配置或加载失败时，系统状态会显示语音降级，文字对话仍然可用。
+
+### 本地语音故障排查与日志
+
+通过 `scripts/start.sh` 启动时，后端日志在 `log/backend.log`，前端日志在 `log/frontend.log`。手动运行 uvicorn 时，后端日志输出到启动它的终端。
+
+```bash
+tail -f log/backend.log
+```
+
+在“设置 → 日志等级”选择 Debug，可以查看模型加载、参考音频读取、合成耗时和音频大小；默认 Error 等级仍会记录生成失败的完整异常堆栈。复现后可切回 Error。
+
+- **点击播放失败**：浏览器开发者工具的 Network 中检查 `POST /chat/audio` 的状态和错误消息，再对照同一时刻的后端日志。`POST /chat/voice` 对应语音输入识别。
+- **`No module named 'einops'` 或缺少语音依赖**：运行 `python3 scripts/bootstrap.py --voice --skip-node` 修复语音环境，然后重启服务。MLX 语音包使用 `--no-deps` 安装，其推理所需依赖由本项目安装清单显式补齐。
+- **模型加载或合成报错**：查看堆栈最底部的原因；首次加载模型较慢，“测试连接”只检查服务可用状态，实际点击播放才能验证完整合成链路。
+
+## 本地与 MiniMax 云端音色
+
+设置页的“语音合成”可选择 `local` 或 `minimax`。`local` 使用本机按需安装的语音组件和模型；`minimax` 使用 MiniMax 云端音色，不需要安装本地语音包或下载本地模型。选择一种服务只影响语音：对话文字会照常返回。
+
+### 配置 MiniMax
+
+MiniMax 的 Key 独立于 LLM Key，不能互用。在 MiniMax 开放平台的“账户管理 → 接口密钥”创建按量付费 API Key，再在设置页选择 MiniMax、填入 Key 和模型名并保存。读取设置不会返回 Key；保存时不填写 Key 会保留原值，显式清空才会删除它。
+
+声音复刻还要求在 MiniMax “账户管理 → 账户信息 → 认证信息”完成个人实名认证或企业认证。官方说明与当前限制以 MiniMax 文档为准：[接口相关 FAQ](https://platform.minimaxi.com/docs/faq/about-apis)、[上传复刻音频](https://platform.minimaxi.com/docs/api-reference/voice-cloning-uploadcloneaudio)。请只上传自己拥有合法授权的声音样本，也不要把 API Key 交给他人或提交到 Git。
+
+### 创建云端音色与隐私
+
+在“档案 → 语音音色”上传参考声音即可创建或替换当前 Soul 的云端音色。MiniMax 接受 MP3、M4A、WAV；官方限制为 10 秒至 5 分钟、最多 20 MB。本应用建议使用清晰、单人说话的 10–30 秒样本，以保持原有录音引导的一致性。
+
+上传即表示该音频会发送给 MiniMax 用于音色复刻。系统会在新音色启用前自动生成一次短句合成试听；该激活合成以及 MiniMax 的复刻/合成服务可能产生费用。该试听不会自动播放，需用户点击播放；聊天文字先显示，聊天语音也只会在用户点击后生成并播放。
+
+创建成功后，原始上传文件会尽力从 MiniMax 删除；替换成功后，旧的远端克隆音色也会尽力删除。网络或服务端暂时不可用时，清理任务会保留并在后续安全操作中重试，重试范围限于当前活跃 Soul 的语音目录；这不会撤销已经验证并启用的新音色。当前激活所需的本地元数据、参考录音和试听文件仍保存在本机运行数据中。
+
+演示重置会把云端音色元数据、参考录音和试听文件一起归档到可恢复备份，远端音色会保留。归档中的待清理任务不会再自动重试；重置本身不会删除远端音色。
+
+云端配置写入被 Git 忽略的 `config/tts.json`；其中包含提供商、MiniMax 服务地址、模型和 API Key。每个 Soul 的云端音色元数据位于 `data/souls/{soul_id}/voice/cloud.json`，同一目录还会保存云端参考录音与激活试听。不要手工共享这些运行数据。
+
+### MiniMax 故障排查
+
+- **“测试连接”失败**：它只校验 MiniMax 凭据，不会合成音频。确认使用的是独立的按量付费 API Key、账户已具备相应权限，且服务地址和网络可用。
+- **提示未配置或没有可用音色**：先保存 MiniMax Key，再上传合规样本并等待状态显示“音色已就绪”。MiniMax 模式不应安装本地语音组件作为前置条件。
+- **401/403、额度或频率限制、超时**：检查 Key 与认证状态，或稍后重试/检查 MiniMax 账户额度。错误会直接显示；系统不会自动切回本地 TTS。
+- **替换创建失败**：旧音色会保持可用，直到新音色完成激活试听。可在修正样本、凭据或额度问题后重试。
 
 ## 配置
 
-### LLM (`config/llm.json`)
+首次启动后在设置页填写 Base URL、API Key 和模型名。`PUT /settings` 中省略 API Key 表示保持现值，传空字符串表示清除；读取设置永远不会返回真实 Key 或掩码占位符。
 
-```json
-{
-  "base_url": "https://api.openai.com/v1",
-  "api_key": "sk-...",
-  "model": "gpt-4o"
-}
+主要本地配置：
+
+- `config/app.json`：当前 `soul_id`、数据根目录、兼容迁移来源与运行参数
+- `config/llm.json`：本地 LLM 配置；不要提交真实 Key
+- `config/souls/demo/`：可提交的脱敏首次运行模板
+
+## 数据与隐私
+
+每个档案有稳定的 `soul_id`，运行数据统一位于：
+
+```text
+data/souls/{soul_id}/
+├── profile/           # 六维 Markdown 与 skill.md，人物事实真源
+├── conversation.json # 当前对话历史
+├── memory/
+│   ├── daily/         # 对话日记
+│   ├── index/         # ChromaDB，可由真源重建
+│   └── candidates.json # 待确认事实
+├── voice/             # 本地或云端参考声音；云端状态见 cloud.json
+└── onboarding.json    # 首次引导状态
 ```
 
-支持任意 OpenAI 兼容接口（Ollama、vLLM、DeepSeek 等）。
+旧版 `config/souls/`、`config/voice/`、`config/memory_db/` 等数据首次迁移时会先备份、复制并校验，不会自动删除原文件。`data/` 默认不进入 Git。
 
-### 应用 (`config/app.json`)
+人物事实只接受以下来源：导入资料、手工编辑、或用户人工确认的候选项。聊天中的用户陈述可形成候选；AI 自己的回复永远不是事实来源。导入任务只生成预览和候选，不直接覆盖档案。
 
-```json
-{
-  "soul_path": "config/souls/test",
-  "log_level": "debug",
-  "frontend_origin": "http://localhost:3326"
-}
+## 开发与测试
+
+Python 依赖以 `pyproject.toml` 为唯一真源：
+
+```bash
+./.venv/bin/python -m pip install -e '.[dev]'
+./.venv/bin/python -m pytest -q
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `soul_path` | 灵魂档案目录路径 |
-| `log_level` | 日志级别：`debug` / `error` |
-| `frontend_origin` | 前端地址，用于 CORS 跨域配置 |
+前端：
 
-### 语音
-
-使用 **CosyVoice3** 零样本语音克隆，根据平台自动选择后端：
-
-- **macOS**：CosyVoice3 MLX 8-bit（Apple Silicon GPU 加速），ASR 使用 mlx-whisper
-- **Windows**：CosyVoice-300M PyTorch（CPU 推理），ASR 使用 faster-whisper
-
-在上传参考音频后（设置 → 语音 → 上传），系统自动提取说话人特征用于语音克隆。
-
-### 灵魂档案 (`config/souls/{name}/`)
-
-6 个维度的 Markdown 文件构成完整数字人格：
-
-| 维度 | 文件 | 说明 | 存储 |
-|------|------|------|------|
-| 基本信息 | basic_info.md | 姓名/性别/年龄/职业 | Soul |
-| 性格 | personality.md | 性格标签/情绪表达 | Soul |
-| 人生经历 | life_experiences.md | 人生时间线 | 记忆库 |
-| 人际关系 | relationships.md | 社会关系 | 记忆库 |
-| 个人特质 | personal_traits.md | 爱好/习惯/擅长/不擅长 | 记忆库 |
-| 情感锚点 | emotional_anchors.md | 重要情感记忆 | 记忆库 |
-
-此外，`skill.md`（可选）存储行为规则卡，由蒸馏功能自动生成，描述"如何扮演这个灵魂"的表达风格、决策模式等。
-
-### 记忆系统
-
-基于 **ChromaDB** 的语义记忆存储，支持：
-
-- **语义检索**：对话时自动检索相关记忆注入 Prompt
-- **间隔重复遗忘**：`strength × 0.5^(days/30)` 时间衰减，检索命中 +0.15 boost
-- **自动提取**：每 10 轮对话异步提取新事实写入记忆库
-- **蒸馏导入**：上传聊天记录 → LLM 自动提取/合并为记忆条目
-
-### 灵魂蒸馏
-
-上传聊天记录（`.txt`），LLM 两阶段分析：
-
-1. **Phase 1**：提取/合并事实到 6 个维度
-2. **Phase 2**：5 个并行 Agent（表达 DNA、决策启发式、心智模型、价值观与张力、综合合成）提取行为规则 → 生成 `skill.md`
-
-## 项目结构
-
-```
-voicefromheaven/
-├── scripts/                              # 启停脚本（macOS: .sh / Windows: .bat）
-├── config/                               # 配置文件
-│   ├── app.json                          # 应用配置
-│   ├── llm.json                          # LLM 配置
-│   ├── circumstances.md                  # 当前场景描述
-│   ├── conversation.json                 # 对话历史持久化
-│   ├── voice/                            # 参考音频 + 文本
-│   ├── memory_db/                        # ChromaDB 向量存储
-│   ├── memory/daily/                     # 每日对话日记
-│   └── souls/{name}/                     # 灵魂档案（6 MD + skill.md）
-├── src/
-│   ├── main.py                           # FastAPI 入口 (uvicorn :8326)
-│   ├── api/routes.py                     # API 路由（15 端点）
-│   ├── config/                           # 配置模块
-│   │   ├── settings.py                   # Settings 单例
-│   │   ├── loader.py                     # JSON 配置加载
-│   │   └── logger.py                     # 统一日志
-│   ├── llm/                              # LLM 客户端
-│   │   ├── client.py                     # OpenAI 兼容 HTTP 客户端
-│   │   └── manager.py                    # LLM 工厂 + 连接测试
-│   ├── soul/                             # 灵魂档案系统
-│   │   ├── profile.py                    # SoulProfile (6 维)
-│   │   ├── loader.py                     # MD 文件 I/O
-│   │   ├── prompt_builder.py             # System Prompt 构建
-│   │   ├── skill_card.py                 # 行为规则卡
-│   │   ├── distiller.py                  # 两阶段 LLM 蒸馏
-│   │   ├── chat_preprocessor.py          # 聊天记录预处理
-│   │   └── phase2_agents.py             # 5 个并行分析 Agent
-│   ├── agent/                            # Agent 核心
-│   │   ├── loop.py                       # 主循环 (输入→Pipeline→输出)
-│   │   ├── pipeline.py                   # 三段式 Pipeline + 依赖注入
-│   │   ├── context.py                    # PipelineContext 数据结构
-│   │   ├── message.py                    # 消息/上下文管理
-│   │   └── modules/
-│   │       ├── prellm/                   # 4 模块
-│   │       │   ├── memory_retrieve.py    #   语义检索记忆
-│   │       │   ├── circumstances.py      #   场景加载
-│   │       │   ├── emotion_detect.py     #   规则情绪检测
-│   │       │   └── soul_context.py       #   System Prompt 组装
-│   │       ├── postllm/                  # 1 模块
-│   │       │   └── quality_check.py      #   质检 + 重试
-│   │       └── postoutput/               # 3 模块
-│   │           ├── context_compress.py   #   上下文压缩
-│   │           ├── memory_persist.py     #   日记落盘
-│   │           └── memory_extract.py     #   记忆提取
-│   ├── memory/                           # 记忆系统
-│   │   ├── store.py                      # ChromaDB 存储 + 遗忘
-│   │   ├── embedder.py                   # 文本向量化
-│   │   └── sync.py                       # Soul ↔ 记忆同步
-│   └── voice/                            # 语音服务
-│       ├── asr.py                        # ASR（mlx-whisper / faster-whisper）
-│       ├── tts.py                        # TTS（CosyVoice3 MLX）
-│       └── tts_official.py               # TTS（CosyVoice PyTorch）
-├── frontend/                             # Next.js 16 前端
-│   └── app/
-│       ├── page.tsx                      # 首页
-│       ├── chat/page.tsx                 # 对话（语音优先）
-│       ├── settings/page.tsx             # 系统设置
-│       ├── soul/page.tsx                 # 灵魂档案管理
-│       └── lib/api.ts                    # API 客户端
-├── tests/                                # 239 个测试用例
-│   ├── test_agent/                       # Agent + Pipeline 测试
-│   ├── test_config/                      # 配置测试
-│   ├── test_llm/                         # LLM 客户端测试
-│   ├── test_memory/                      # 记忆系统测试
-│   ├── test_soul/                        # Soul + 蒸馏测试
-│   └── test_voice/                       # 语音测试
-└── deps/                                 # 模型依赖
-    ├── CosyVoice/                        # 官方 PyTorch 模型
-    └── Fun-CosyVoice3-0.5B-2512-8bit/   # MLX 8-bit 模型
+```bash
+cd frontend
+npm ci
+npm test
+npm run lint
+npx tsc --noEmit
+npm run build
 ```
 
-## API
+环境诊断：
 
-| Method | Path | 说明 |
-|--------|------|------|
-| POST | `/chat` | 文字对话 → 返回文本 + instruct |
-| POST | `/chat/voice` | 语音对话 → ASR → 文本 + instruct |
-| POST | `/chat/audio` | 给定文本 + instruct → 流式 WAV 音频 |
-| GET | `/chat/history` | 获取对话历史 |
-| DELETE | `/chat/history` | 清空对话历史 |
-| GET | `/soul` | 获取全部 6 个维度 |
-| GET | `/soul/skill` | 获取行为规则卡 |
-| GET | `/soul/circumstances` | 获取场景 + 可选预设列表 |
-| PUT | `/soul/circumstances` | 更新场景（热加载） |
-| GET | `/soul/{dimension}` | 获取单个维度 |
-| PUT | `/soul/{dimension}` | 更新维度（缓存失效） |
-| POST | `/soul/distill` | 上传聊天记录 → LLM 蒸馏分析 |
-| GET | `/settings` | 获取配置（Key 脱敏） |
-| PUT | `/settings` | 更新 LLM 配置 + 日志级别 |
-| POST | `/settings/voice/upload` | 上传参考音频 |
-| GET | `/settings/voice/status` | 查询参考音频状态 |
-| POST | `/settings/test-llm` | 测试 LLM 连接 |
+```bash
+python3 scripts/bootstrap.py --dry-run
+curl http://localhost:8326/system/status
+```
 
-## 技术栈
+## 关键 API
 
-- **后端**: Python 3.11+ / FastAPI / httpx / uvicorn
-- **前端**: Next.js 16 / TypeScript / Tailwind CSS
-- **语音**: mlx-whisper / faster-whisper (ASR) + CosyVoice3 MLX / PyTorch (TTS)
-- **向量存储**: ChromaDB + sentence-transformers
-- **LLM**: OpenAI 兼容 API（支持 streaming + JSON mode）
-- **音频处理**: ffmpeg + scipy + pyloudnorm
-- **测试**: pytest 239 用例 + pytest-asyncio
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/system/status` | 初始化、当前 Soul、核心/语音能力和待处理任务 |
+| GET/POST | `/system/voice-installation` | 查看当前安装状态或创建语音安装任务 |
+| GET | `/system/diagnostics` | 返回不含私密正文的环境诊断 |
+| GET | `/system/export` | 导出当前 Soul 的用户数据 |
+| POST | `/system/demo-reset` | 备份当前数据后恢复脱敏演示档案 |
+| POST | `/system/onboarding/steps/{step}` | 显式记录人物、导入确认或声音步骤 |
+| POST | `/system/onboarding/complete` | 完成人物与导入确认后结束首次引导 |
+| POST | `/chat` | 文字对话；返回记忆来源与安全状态 |
+| POST | `/chat/voice` | ASR 后对话；返回真实转写 |
+| POST | `/chat/audio` | 独立 TTS，失败不影响文字回复 |
+| POST | `/soul/imports` | 创建导入预览任务，返回 `202 + job_id` |
+| GET | `/jobs/{job_id}` | 查询后台任务进度与错误 |
+| GET | `/memory/candidates` | 查看待确认事实与来源 |
+| POST | `/memory/candidates/{id}/approve` | 编辑后确认写入 |
+| POST | `/memory/candidates/{id}/reject` | 忽略候选 |
+| GET/PUT | `/settings` | 读取或热更新配置 |
+| POST | `/settings/test-tts` | 校验当前语音服务连接；MiniMax 不合成音频 |
+| GET | `/settings/voice/status` | 当前提供商及其音色状态 |
+| POST | `/settings/voice/upload` | 上传本地参考音频或创建 MiniMax 云端音色 |
+| GET | `/settings/voice/preview` | 读取已激活 MiniMax 音色的本地试听 WAV |
+
+错误统一为 `{code, message, retryable, request_id}`；日志默认记录请求 ID、阶段耗时和任务状态，不应记录完整私密内容。
+
+## 故障排查
+
+- **提示 Python 版本不支持**：安装 Python 3.11、3.12 或 3.13，然后重新运行启动脚本。损坏或失效的 `.venv` 会被自动修复。
+- **找不到 Node/npm**：安装 Node.js 22+，确认 `node --version` 和 `npm --version` 可用。
+- **文字可用、语音不可用**：在“档案 → 语音音色”点击安装，完成后重启；也可运行 `bootstrap.py --voice`。安装 `ffmpeg` 后再查看 `/system/status`。
+- **语音安装失败**：直接点击“重试安装”即可继续未完成的模型下载。命令行安装失败时只显示末尾错误摘要，不会再因 `mlx-audio[all]` 依赖回溯反复刷屏。
+- **声音可用但语气不变化**：查看 `/settings/voice/status` 的 `supports_instruction`。官方跨平台 CosyVoice 零样本后端只克隆音色，不支持逐轮语气指令；Apple Silicon 的 MLX 后端支持该能力。
+- **LLM 401/404**：检查 API Key、Base URL 与模型名；保存设置后客户端会立即热更新。
+- **记忆索引不可用**：系统会降级为无检索文字模式。修复 ChromaDB 依赖后重启即可，Markdown 档案不受影响。
+- **直接运行 Turbopack build 报端口权限错误**：受限环境会禁止其内部端口；项目的 `npm run build` 已固定使用 webpack 生产构建。
+
+## 升级
+
+升级前备份 `data/` 与 `config/llm.json`，拉取代码后重新运行启动脚本。Bootstrap 会根据依赖指纹增量更新环境；数据迁移采用复制与校验策略。不要手工删除旧数据，确认新版本可读后再自行归档。
+
+设置页的“恢复演示数据”会先把当前人物档案、声音、对话、候选事实和引导状态完整复制到 `data/backups/`，再恢复脱敏模板；任一步失败会回滚活动数据，不会修改 LLM 配置。该操作必须由用户显式确认。
+
+## 安全边界
+
+这是 AI 人物模拟，不是逝者本人、医疗服务或危机支持工具。高风险情绪场景会退出角色化强化，优先建议联系现实中可信任的人和当地专业/紧急支持。设计遵循自主性、安全、透明和问责原则。

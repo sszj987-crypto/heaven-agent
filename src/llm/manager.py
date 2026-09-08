@@ -1,4 +1,5 @@
 import httpx
+from urllib.parse import urlparse
 from .client import LLMClient
 from ..config.loader import LLMConfig
 
@@ -15,6 +16,17 @@ def get_llm_client() -> LLMClient:
     return _llm_client
 
 
+async def replace_llm_client(config: LLMConfig) -> LLMClient:
+    """Atomically replace the process-wide client and close the old pool."""
+    global _llm_client
+    previous = _llm_client
+    replacement = LLMManager.get_client(config)
+    _llm_client = replacement
+    if previous is not None and previous is not replacement:
+        await previous.aclose()
+    return replacement
+
+
 class LLMManager:
     """根据配置创建 LLMClient 实例"""
 
@@ -23,6 +35,9 @@ class LLMManager:
         """工厂方法，创建 LLM 客户端（允许空 API Key，实际请求时校验）"""
         if not config.base_url:
             raise ValueError("API Base URL is not configured.")
+        parsed = urlparse(config.base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("API Base URL must be a valid HTTP(S) URL.")
         return LLMClient(
             base_url=config.base_url,
             api_key=config.api_key,

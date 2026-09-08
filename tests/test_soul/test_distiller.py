@@ -260,6 +260,25 @@ class TestDistill:
         assert result.summary
 
     @pytest.mark.asyncio
+    async def test_preview_reports_changes_without_writing_profile(self):
+        """异步导入必须先形成预览，不能在人工确认前覆盖人物档案。"""
+        new_personality = "- 乐观开朗\n- 幽默风趣"
+        llm = _make_llm_client(_valid_llm_response({
+            "personality": new_personality,
+        }))
+        loader = _make_soul_loader({"personality": "- 安静内敛"})
+        distiller = SoulDistiller(llm, loader)
+
+        result = await distiller.distill(
+            "用户: 你总是很幽默\n逝者: 那当然",
+            apply_changes=False,
+        )
+
+        assert result.changes == ["personality"]
+        assert result.profile["personality"] == new_personality
+        assert loader.load_dimension("personality").strip() == "- 安静内敛"
+
+    @pytest.mark.asyncio
     async def test_cold_start_with_empty_profile(self):
         """空档案冷启动：LLM 根据聊天记录生成初始内容"""
         llm = _make_llm_client(_valid_llm_response({

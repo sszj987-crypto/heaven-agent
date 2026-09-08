@@ -1,17 +1,21 @@
 .DS_Store
 __pycache__/
 *.pyc
+*.egg-info/
 .pytest_cache/
 .pids
 log/
 memory/daily
-docs
+/data/
+/docs/_generated/
 # MLX model files (downloaded locally, ~1.3GB each)
 Fun-CosyVoice3-*/
 config/llm.json
+config/tts.json
 config/memory_db
 config/souls/test/
 config/souls/test copy
 config/conversation.json
 config/voice
 deps
+docs

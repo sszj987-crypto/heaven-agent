@@ -38,14 +38,17 @@ class MemoryExtractModule(PipelineModule):
     _llm = None          # LLMClient
     _messages = None     # MessageManager
     _loader = None       # SoulLoader
+    _candidates = None   # CandidateStore
     _extracting: bool = False
     _crunch_interval: int = 10
+    _job_manager = None
 
     @classmethod
-    def set_deps(cls, llm_client, message_manager, soul_loader):
+    def set_deps(cls, llm_client, message_manager, soul_loader, candidates=None):
         cls._llm = llm_client
         cls._messages = message_manager
         cls._loader = soul_loader
+        cls._candidates = candidates
 
     @classmethod
     def configure(cls, crunch_interval: int = 10):
@@ -71,11 +74,16 @@ class MemoryExtractModule(PipelineModule):
         log.info("触发人物信息提取, soul=%s, turns=%d, recent_msgs=%d",
                  soul_name, turns, len(recent))
 
-        asyncio.create_task(self._do_extract(soul_name, recent))
+        if self._job_manager is not None:
+            self._job_manager.submit(
+                "memory_extract", self._do_extract(soul_name, recent)
+            )
+        else:
+            asyncio.create_task(self._do_extract(soul_name, recent))
         return ctx
 
     async def _do_extract(self, soul_name: str, recent: list[dict]):
-        self.__class__._extracting = True
+        self._extracting = True
         try:
             prompt = self._build_prompt(soul_name, recent)
             messages = [{"role": "user", "content": prompt}]
@@ -88,28 +96,21 @@ class MemoryExtractModule(PipelineModule):
             )
 
             facts = self._parse_result(raw)
-            updated_dims: set[str] = set()
-            for fact in facts:
-                dim = fact.get("dimension", "")
-                content = fact.get("content", "")
-                if dim not in _PERSON_DIMENSIONS or not content:
-                    continue
-                self._append_to_dimension(dim, content)
-                updated_dims.add(dim)
+            source_excerpt = "\n".join(
+                msg["content"] for msg in recent if msg.get("role") == "user"
+            )[-1000:]
+            queued = self._persist_candidates(facts, source_excerpt=source_excerpt)
 
-            if updated_dims:
-                log.info("人物信息提取完成, soul=%s, turns=%d, updated_dims=%s",
-                         soul_name, self._messages.conversation_turns, updated_dims)
-                # 刷新 soul 缓存，让下次对话使用最新内容
-                from ..prellm.soul_context import SoulContextModule
-                SoulContextModule.invalidate()
+            if queued:
+                log.info("人物候选事实提取完成, soul=%s, turns=%d, queued=%d",
+                         soul_name, self._messages.conversation_turns, queued)
             else:
                 log.debug("人物信息提取: 无新的明确信息")
 
         except Exception as e:
             log.error("人物信息提取失败: %s", e)
         finally:
-            self.__class__._extracting = False
+            self._extracting = False
 
     def _build_prompt(self, soul_name: str, history: list[dict]) -> str:
         dim_desc = "\n".join(
@@ -117,10 +118,12 @@ class MemoryExtractModule(PipelineModule):
             for key, label in _PERSON_DIMENSIONS.items()
         )
 
+        # 只使用用户提供的原始陈述。assistant 内容由模型生成，若将其作为
+        # 人物事实来源会把幻觉永久写回 Soul 档案。
         conv_lines = []
         for msg in history:
-            label = soul_name if msg["role"] == "assistant" else "对方"
-            conv_lines.append(f"{label}: {msg['content']}")
+            if msg["role"] == "user":
+                conv_lines.append(f"对方提供的资料: {msg['content']}")
         conv_text = "\n".join(conv_lines)
 
         return f"""你是{soul_name}的记忆管家。请仔细阅读以下对话，提取{soul_name}在对话中**新透露的、之前未知的**个人信息。
@@ -132,10 +135,11 @@ class MemoryExtractModule(PipelineModule):
 {conv_text}
 
 **重要：只提取明确的新信息。** 以下情况不提取：
+- 模型回复不能作为人物事实来源；这里只能依据“对方提供的资料”
 - 已经在之前对话中出现过的信息
 - 寒暄、问候、日常闲聊中的非信息性内容
 - 模糊、不确定、推测性的内容
-- 对方提到而不是逝者本人确认的信息
+- 无法从对方原话明确归属于{soul_name}的信息
 - 不够具体、无法形成事实条目的一句话
 
 如果发现值得记录的新事实，输出 JSON 数组：
@@ -153,6 +157,32 @@ class MemoryExtractModule(PipelineModule):
         updated = (current.rstrip() if current else "") + new_entry + "\n"
         self._loader.save_dimension(dim, updated)
         log.info("维度已更新, dim=%s, entry=%s", dim, content[:80])
+
+    def _persist_candidates(self, facts: list[dict], source_excerpt: str) -> int:
+        """Queue facts for human review; never write generated facts directly."""
+        if self._candidates is None:
+            log.warning("候选事实存储未配置，跳过 %d 条提取结果", len(facts))
+            return 0
+        count = 0
+        for fact in facts:
+            dimension = fact.get("dimension", "")
+            content = str(fact.get("content", "")).strip()
+            if dimension not in _PERSON_DIMENSIONS or not content:
+                continue
+            confidence = fact.get("confidence", 0.7)
+            try:
+                confidence = max(0.0, min(1.0, float(confidence)))
+            except (TypeError, ValueError):
+                confidence = 0.7
+            self._candidates.add(
+                dimension=dimension,
+                content=content,
+                source_type="conversation",
+                source_excerpt=source_excerpt,
+                confidence=confidence,
+            )
+            count += 1
+        return count
 
     def _parse_result(self, raw: str) -> list[dict]:
         text = raw.strip()

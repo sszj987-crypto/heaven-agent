@@ -25,6 +25,18 @@ class TestSettings:
     def teardown_method(self):
         self._tmp.cleanup()
 
+    def _write_tts(self, **minimax):
+        values = {
+            "base_url": "https://api.minimaxi.com",
+            "api_key": "",
+            "model": "speech-2.8-hd",
+        }
+        values.update(minimax)
+        (self._config_dir / "tts.json").write_text(json.dumps({
+            "provider": "local",
+            "minimax": values,
+        }))
+
     def test_init_and_get(self):
         Settings.init(self._config_dir)
         settings = Settings.get()
@@ -76,6 +88,31 @@ class TestSettings:
         saved = json.loads((self._config_dir / "llm.json").read_text())
         assert saved["api_key"] == "new-key"
         assert saved["model"] == "gpt-4o-mini"
+
+    def test_masked_api_key_does_not_overwrite_saved_secret(self):
+        Settings.init(self._config_dir)
+
+        Settings.get().update_llm(api_key="***", model="gpt-4o-mini")
+
+        assert Settings.get().llm.api_key == "sk-test123"
+        saved = json.loads((self._config_dir / "llm.json").read_text())
+        assert saved["api_key"] == "sk-test123"
+
+    def test_update_tts_keeps_secret_when_key_is_omitted(self):
+        self._write_tts(api_key="existing")
+        settings = Settings.init(self._config_dir)
+
+        settings.update_tts(provider="minimax", minimax={"model": "speech-2.8-turbo"})
+
+        assert settings.tts.minimax.api_key == "existing"
+
+    def test_update_tts_empty_key_clears_secret(self):
+        self._write_tts(api_key="existing")
+        settings = Settings.init(self._config_dir)
+
+        settings.update_tts(minimax={"api_key": ""})
+
+        assert settings.tts.minimax.api_key == ""
 
     def test_update_circumstances_writes_back(self):
         Settings.init(self._config_dir)

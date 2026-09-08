@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("chromadb", reason="核心环境尚未安装 ChromaDB")
+
 from src.memory.store import MemoryStore
 from src.memory.sync import (
     MemorySynchronizer,
@@ -105,6 +107,14 @@ class TestMemoryStore:
         assert stats["total"] == 3
         assert stats["by_dimension"]["hobbies"] == 2
         assert stats["by_dimension"]["life_experiences"] == 1
+
+    def test_clear_removes_all_rebuildable_memories(self):
+        store = _make_store()
+        store.add("hobbies", "打游戏")
+        store.add("conversation", "一段摘要")
+
+        assert store.clear() == 2
+        assert store.count == 0
 
     # ── 遗忘 / 时间衰减测试 ──────────────────────────
 

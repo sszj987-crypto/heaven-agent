@@ -8,13 +8,13 @@ log = get_logger("llm")
 
 
 def _log_messages_debug(messages: list[dict]):
-    """DEBUG 级别打印完整的 messages 全文（system prompt + history + current）"""
+    """DEBUG 级别只打印消息结构，不记录私密正文。"""
     if not log.isEnabledFor(10):  # DEBUG level
         return
     for i, msg in enumerate(messages):
         role = msg["role"]
         content = msg["content"]
-        log.debug("[msg %d/%d] role=%s, len=%d\n%s", i + 1, len(messages), role, len(content), content)
+        log.debug("[msg %d/%d] role=%s, len=%d", i + 1, len(messages), role, len(content))
 
 
 class LLMClient:
@@ -34,6 +34,9 @@ class LLMClient:
     @property
     def model(self) -> str:
         return self._model
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
     async def chat(self, messages: list[dict], timeout: float | None = None,
                    max_tokens: int | None = None, json_mode: bool = False) -> str:
@@ -75,11 +78,10 @@ class LLMClient:
                      elapsed, len(content),
                      usage.get("prompt_tokens", "N/A"),
                      usage.get("completion_tokens", "N/A"))
-            log.debug("LLM chat 响应全文:\n%s", content)
+            log.debug("LLM chat 响应已接收, len=%d", len(content))
             if not content or len(content.strip()) == 0:
-                log.warning("LLM chat 返回空内容, finish_reason=%s, raw_data=%s",
-                          data["choices"][0].get("finish_reason", "N/A"),
-                          json.dumps(data, ensure_ascii=False)[:1000])
+                log.warning("LLM chat 返回空内容, finish_reason=%s",
+                          data["choices"][0].get("finish_reason", "N/A"))
             return content
         except Exception as e:
             elapsed = time.monotonic() - t0

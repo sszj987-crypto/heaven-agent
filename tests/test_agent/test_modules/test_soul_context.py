@@ -88,3 +88,16 @@ class TestSoulContextModule:
         ctx = await self._module.process(ctx)
 
         assert len(ctx.llm_messages) == 2  # system + current only
+
+    @pytest.mark.asyncio
+    async def test_retrieved_memories_are_rebuilt_for_each_turn(self):
+        first = PipelineContext(user_message="第一次")
+        first.retrieved_memories = [{"document": "喜欢桂花糕", "metadata": {"dimension": "personal_traits"}}]
+        await self._module.process(first)
+
+        second = PipelineContext(user_message="第二次")
+        second.retrieved_memories = [{"document": "曾经住在苏州", "metadata": {"dimension": "life_experiences"}}]
+        await self._module.process(second)
+
+        assert "曾经住在苏州" in second.system_prompt
+        assert "喜欢桂花糕" not in second.system_prompt

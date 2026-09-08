@@ -1,4 +1,8 @@
+import json
+from pathlib import Path
+
 from ..config.logger import get_logger
+from ..data.files import atomic_write_text
 
 log = get_logger("message")
 
@@ -37,7 +41,7 @@ class MessageManager:
         system_msgs = [m for m in self._messages if m["role"] == "system"]
         conv_msgs = [m for m in self._messages if m["role"] in ("user", "assistant")]
         kept_conv = conv_msgs[-keep_recent:] if keep_recent > 0 else []
-        log.info("压缩对话历史, 原始对话=%d条, 保留=%d条, 摘要=%s", len(conv_msgs), keep_recent, summary[:50])
+        log.info("压缩对话历史, 原始对话=%d条, 保留=%d条, 摘要长度=%d", len(conv_msgs), keep_recent, len(summary))
         self._messages = system_msgs + [
             {"role": "system", "content": f"[对话摘要] {summary}"}
         ] + kept_conv
@@ -66,12 +70,10 @@ class MessageManager:
 
     def save_to_file(self, path) -> None:
         """将对话历史保存为 JSON 文件"""
-        import json
-        from pathlib import Path
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps(self._messages, ensure_ascii=False, indent=2)
-        p.write_text(content)
+        atomic_write_text(p, content)
         log.info("对话历史保存到文件, path=%s, messages=%d, size=%d bytes", p, len(self._messages), len(content))
 
     def load_from_file(self, path) -> bool:

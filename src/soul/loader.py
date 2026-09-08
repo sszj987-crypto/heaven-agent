@@ -1,6 +1,8 @@
+import threading
 from pathlib import Path
 from .profile import SoulProfile, DIMENSION_NAMES
 from .skill_card import SkillCard, SECTION_HEADERS
+from ..data.files import atomic_write_text
 
 _SKILL_FILE = "skill.md"
 
@@ -22,29 +24,33 @@ class SoulLoader:
 
     def __init__(self, soul_path: Path):
         self._soul_path = Path(soul_path)
+        self._lock = threading.RLock()
 
     def load(self) -> SoulProfile:
         """加载完整灵魂档案"""
         if not self._soul_path.is_dir():
             raise FileNotFoundError(f"Soul not found: {self._soul_path}")
 
-        profile = SoulProfile()
-        for dim in DIMENSION_NAMES:
-            self._load_dimension(profile, dim)
-        return profile
+        with self._lock:
+            profile = SoulProfile()
+            for dim in DIMENSION_NAMES:
+                self._load_dimension(profile, dim)
+            return profile
 
     def load_dimension(self, dimension: str) -> str:
         """加载单个维度内容"""
-        file_path = self._soul_path / f"{dimension}.md"
-        if file_path.exists():
-            return file_path.read_text(encoding="utf-8")
-        return ""
+        file_path = self._dimension_path(dimension)
+        with self._lock:
+            if file_path.exists():
+                return file_path.read_text(encoding="utf-8")
+            return ""
 
     def save_dimension(self, dimension: str, content: str):
         """保存单个维度内容到 md 文件"""
         self._soul_path.mkdir(parents=True, exist_ok=True)
-        file_path = self._soul_path / f"{dimension}.md"
-        file_path.write_text(content, encoding="utf-8")
+        file_path = self._dimension_path(dimension)
+        with self._lock:
+            atomic_write_text(file_path, content)
 
     def _load_dimension(self, profile: SoulProfile, dimension: str):
         file_path = self._soul_path / f"{dimension}.md"
@@ -73,7 +79,13 @@ class SoulLoader:
         """保存行为规则卡到 skill.md。"""
         self._soul_path.mkdir(parents=True, exist_ok=True)
         path = self._soul_path / _SKILL_FILE
-        path.write_text(_format_skill_markdown(skill), encoding="utf-8")
+        with self._lock:
+            atomic_write_text(path, _format_skill_markdown(skill))
+
+    def _dimension_path(self, dimension: str) -> Path:
+        if not dimension or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in dimension):
+            raise ValueError("invalid Soul dimension")
+        return self._soul_path / f"{dimension}.md"
 
 
 def _escape_markdown_headers(content: str) -> str:

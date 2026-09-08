@@ -11,8 +11,9 @@ log = get_logger("asr")
 class ASRService:
     """本地语音识别服务，基于 mlx-whisper"""
 
-    def __init__(self, model: str = "mlx-community/whisper-small-mlx"):
+    def __init__(self, model: str = "mlx-community/whisper-small-mlx", transcribe_fn=None):
         self._model = model
+        self._transcribe_fn = transcribe_fn
 
     async def transcribe(self, audio_bytes: bytes) -> str:
         """
@@ -29,7 +30,11 @@ class ASRService:
             raise
 
     def _transcribe_sync(self, audio_bytes: bytes) -> str:
-        import mlx_whisper
+        if self._transcribe_fn is None:
+            import mlx_whisper
+            transcribe = mlx_whisper.transcribe
+        else:
+            transcribe = self._transcribe_fn
 
         # 写入临时文件（mlx-whisper 接受文件路径）
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -37,7 +42,7 @@ class ASRService:
             tmp_path = f.name
 
         try:
-            result = mlx_whisper.transcribe(tmp_path, path_or_hf_repo=self._model)
+            result = transcribe(tmp_path, path_or_hf_repo=self._model)
             return result.get("text", "").strip()
         finally:
             Path(tmp_path).unlink(missing_ok=True)

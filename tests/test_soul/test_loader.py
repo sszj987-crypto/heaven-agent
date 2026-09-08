@@ -1,5 +1,8 @@
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 from src.soul.loader import SoulLoader
 from src.soul.profile import DIMENSION_NAMES
 
@@ -56,6 +59,15 @@ class TestSoulLoader:
         self._loader.save_dimension("basic_info", "new content")
         content = self._loader.load_dimension("basic_info")
         assert content == "new content"
+
+    def test_failed_atomic_replace_preserves_previous_dimension(self):
+        original = self._loader.load_dimension("basic_info")
+
+        with patch("src.data.files.os.replace", side_effect=OSError("disk failure")):
+            with pytest.raises(OSError, match="disk failure"):
+                self._loader.save_dimension("basic_info", "partial new content")
+
+        assert self._loader.load_dimension("basic_info") == original
 
     def test_save_creates_directory_if_not_exists(self):
         new_path = self._soul_path / "new_soul"

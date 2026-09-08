@@ -7,9 +7,7 @@ import wave as wav_mod
 from pathlib import Path
 from typing import AsyncGenerator
 
-import mlx.core as mx
 import numpy as np
-import soundfile as sf
 
 from ..agent.context import TTSConfig
 from ..config.logger import get_logger
@@ -103,6 +101,10 @@ class TTSService:
     def has_reference(self) -> bool:
         return self._ref_audio_path.exists()
 
+    @property
+    def supports_instruction(self) -> bool:
+        return True
+
     def save_reference_audio(self, audio_bytes: bytes) -> None:
         """保存用户上传的参考音频，统一转为 24kHz 单声道 WAV"""
         import subprocess
@@ -133,6 +135,7 @@ class TTSService:
         except (subprocess.CalledProcessError, FileNotFoundError):
             log.warning("ffmpeg 不可用，使用 soundfile 转换格式")
             try:
+                import soundfile as sf
                 data, sr = sf.read(str(raw_path))
                 if data.ndim > 1:
                     data = data.mean(axis=1)
@@ -160,16 +163,20 @@ class TTSService:
                  self._ref_audio_path, len(final_bytes), final_hash)
 
         # 参考音频质量校验（诊断用，不阻塞流程）
-        ref_data, _ = sf.read(str(self._ref_audio_path))
-        rms = float(np.sqrt(np.mean(ref_data ** 2)))
-        peak = float(np.max(np.abs(ref_data)))
-        duration = len(ref_data) / SAMPLE_RATE
-        if duration < 3.0:
-            log.warning("参考音频时长偏短 (%.1fs)，建议使用 5-8 秒清晰语音", duration)
-        if peak > 0 and rms > 0:
-            snr_est = 20 * np.log10(peak / rms)
-            if snr_est < 15:
-                log.warning("参考音频信噪比可能偏低 (%.1fdB)，声音克隆质量可能受影响", snr_est)
+        try:
+            import soundfile as sf
+            ref_data, _ = sf.read(str(self._ref_audio_path))
+            rms = float(np.sqrt(np.mean(ref_data ** 2)))
+            peak = float(np.max(np.abs(ref_data)))
+            duration = len(ref_data) / SAMPLE_RATE
+            if duration < 3.0:
+                log.warning("参考音频时长偏短 (%.1fs)，建议使用 5-8 秒清晰语音", duration)
+            if peak > 0 and rms > 0:
+                snr_est = 20 * np.log10(peak / rms)
+                if snr_est < 15:
+                    log.warning("参考音频信噪比可能偏低 (%.1fdB)，声音克隆质量可能受影响", snr_est)
+        except ImportError:
+            log.debug("soundfile 未安装，跳过参考音频质量诊断")
 
 
     async def speak(self, text: str, config: TTSConfig | None = None) -> AsyncGenerator[bytes, None]:
@@ -208,9 +215,9 @@ class TTSService:
             if item is None:
                 break
             if isinstance(item, Exception):
-                log.error("TTS 生成失败: %s", item, exc_info=True)
-                yield b""
-                return
+                log.error("TTS 生成失败: %s", item,
+                          exc_info=(type(item), item, item.__traceback__))
+                raise item
             audio_array = item
 
         if audio_array is None or audio_array.shape[0] == 0:
@@ -249,6 +256,13 @@ class TTSService:
         所有情感表达通过 LLM 生成的标点和语气词（…、~、！、呢、呀）驱动。
         """
         t0 = time.monotonic()
+        try:
+            import mlx.core as mx
+            import soundfile as sf
+        except ImportError as exc:
+            raise RuntimeError(
+                "MLX 语音依赖未安装，请运行 scripts/bootstrap.py --voice"
+            ) from exc
         model = self._load_model()
 
         # 1. 标点符号强化：确保结尾有停顿标记，有效减少「尾音复读机」幻觉
@@ -314,6 +328,10 @@ class MockTTSService:
     @property
     def has_reference(self) -> bool:
         return self._ref_audio_path.exists()
+
+    @property
+    def supports_instruction(self) -> bool:
+        return True
 
     def save_reference_audio(self, audio_bytes: bytes) -> None:
         self._ref_audio_path.write_bytes(audio_bytes)
