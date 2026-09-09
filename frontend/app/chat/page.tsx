@@ -33,6 +33,12 @@ function requestError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+type ActiveRequest = {
+  id: string;
+  abort: AbortController;
+  messageIds: string[];
+};
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -44,6 +50,7 @@ export default function ChatPage() {
   const audioSessionRef = useRef<ReturnType<typeof createChatAudioSession> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const epochRef = useRef(0);
+  const activeRequestRef = useRef<ActiveRequest | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const shouldRestoreLatestPositionRef = useRef(false);
   const [voiceSettings, setVoiceSettings] = useState<TTSSettings | null>(null);
@@ -61,6 +68,8 @@ export default function ChatPage() {
     audioSessionRef.current = newAudioSession();
     return () => {
       conversationEpoch.current++;
+      activeRequestRef.current?.abort.abort();
+      activeRequestRef.current = null;
       pressingRef.current = false;
       const recorder = mediaRecorderRef.current;
       if (recorder) {
@@ -134,6 +143,16 @@ export default function ChatPage() {
     if (message) await audioSessionRef.current?.play(message);
   }, [messages]);
 
+  const cancelActiveRequest = useCallback(() => {
+    const active = activeRequestRef.current;
+    if (!active) return;
+    activeRequestRef.current = null;
+    active.abort.abort();
+    setMessages(current => current.filter(message => !active.messageIds.includes(message.id || "")));
+    setInteractionError("");
+    setPhase("idle");
+  }, []);
+
   const handleSendText = useCallback(async () => {
     if (!input.trim() || phase !== "idle") return;
     const text = input.trim();
@@ -141,9 +160,16 @@ export default function ChatPage() {
     audioSessionRef.current?.stop();
     setInput("");
     setInteractionError("");
-    setMessages((current) => [...current, { role: "user", content: text }]);
+    const userMessageId = crypto.randomUUID();
+    setMessages((current) => [...current, { id: userMessageId, role: "user", content: text }]);
     setPhase("replying");
     const messageId = crypto.randomUUID();
+    const request = {
+      id: crypto.randomUUID(),
+      abort: new AbortController(),
+      messageIds: [userMessageId, messageId],
+    };
+    activeRequestRef.current = request;
 
     try {
       setMessages((current) => [...current, {
@@ -152,25 +178,28 @@ export default function ChatPage() {
         content: "",
       }]);
       const response = await streamTextMessage(text, (event) => {
-        if (epoch !== epochRef.current) return;
+        if (epoch !== epochRef.current || activeRequestRef.current?.id !== request.id) return;
         setMessages((current) => current.map((message) => {
           if (message.id !== messageId) return message;
           if (event.type === "delta") return { ...message, content: message.content + event.content };
           if (event.type === "reset") return { ...message, content: "" };
           return message;
         }));
-      });
-      if (epoch !== epochRef.current) return;
+      }, request.abort.signal);
+      if (epoch !== epochRef.current || activeRequestRef.current?.id !== request.id) return;
       setMessages((current) => current.map((message) => message.id === messageId
         ? { ...createAssistantMessage(response, text), id: messageId }
         : message));
     } catch (error) {
-      if (epoch === epochRef.current) {
+      if (epoch === epochRef.current && activeRequestRef.current?.id === request.id) {
         setMessages((current) => current.filter((message) => message.id !== messageId));
         setInteractionError(requestError(error, "回复失败，请重试"));
       }
     } finally {
-      if (epoch === epochRef.current) setPhase("idle");
+      if (epoch === epochRef.current && activeRequestRef.current?.id === request.id) {
+        activeRequestRef.current = null;
+        setPhase("idle");
+      }
     }
   }, [input, phase]);
 
@@ -232,18 +261,29 @@ export default function ChatPage() {
           return;
         }
 
+        const request = {
+          id: crypto.randomUUID(),
+          abort: new AbortController(),
+          messageIds: [],
+        };
+        activeRequestRef.current = request;
         try {
-          const response = await sendVoiceMessage(audioBlob);
-          if (epoch !== epochRef.current) return;
+          const response = await sendVoiceMessage(audioBlob, request.abort.signal);
+          if (epoch !== epochRef.current || activeRequestRef.current?.id !== request.id) return;
           setMessages((current) => [
             ...current,
             { role: "user", content: response.transcript || "[未能显示语音转写]" },
             createAssistantMessage(response, response.transcript),
           ]);
         } catch (error) {
-          if (epoch === epochRef.current) setInteractionError(requestError(error, "语音识别失败，请重试"));
+          if (epoch === epochRef.current && activeRequestRef.current?.id === request.id) {
+            setInteractionError(requestError(error, "语音识别失败，请重试"));
+          }
         } finally {
-          if (epoch === epochRef.current) setPhase("idle");
+          if (epoch === epochRef.current && activeRequestRef.current?.id === request.id) {
+            activeRequestRef.current = null;
+            setPhase("idle");
+          }
         }
       };
 
@@ -271,6 +311,7 @@ export default function ChatPage() {
     if (!confirm("确定要清空当前对话吗？原记录会归档到本地回收目录，可手工恢复。")) return;
     const epoch = epochRef.current;
     try {
+      cancelActiveRequest();
       await deleteHistory();
       if (epoch !== epochRef.current) return;
       epochRef.current++;
@@ -529,18 +570,30 @@ export default function ChatPage() {
           className="min-w-0 flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-white/30 transition-colors disabled:opacity-30"
         />
 
-        <button
-          type="button"
-          onClick={() => void handleSendText()}
-          aria-label="发送消息"
-          disabled={busy || !input.trim()}
-          className="shrink-0 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center disabled:opacity-20 transition-all"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-        </button>
+        {phase === "replying" || phase === "transcribing" ? (
+          <button
+            type="button"
+            onClick={cancelActiveRequest}
+            aria-label="停止当前回复"
+            title="停止"
+            className="shrink-0 w-10 h-10 rounded-full bg-red-400/20 text-red-100 hover:bg-red-400/30 flex items-center justify-center transition-all"
+          >
+            <span className="block h-3 w-3 rounded-sm bg-current" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void handleSendText()}
+            aria-label="发送消息"
+            disabled={busy || !input.trim()}
+            className="shrink-0 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center disabled:opacity-20 transition-all"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );

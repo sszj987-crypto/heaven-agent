@@ -35,6 +35,13 @@ class MemoryReference(APIModel):
     source_type: str = "unknown"
 
 
+class ChatTiming(APIModel):
+    """Server-side timings for a completed chat request, in milliseconds."""
+
+    first_response_ms: int | None = None
+    total_response_ms: int = 0
+
+
 class ChatResponse(APIModel):
     response_id: str = ""
     response_text: str
@@ -43,6 +50,7 @@ class ChatResponse(APIModel):
     transcript: str | None = None
     used_memories: list[MemoryReference] = Field(default_factory=list)
     safety_state: SafetyState = "normal"
+    timing: ChatTiming = Field(default_factory=ChatTiming)
 
 
 class ChatFeedbackUpdate(APIModel):

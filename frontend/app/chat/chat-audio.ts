@@ -101,7 +101,7 @@ export function createChatAudioSession(callbacks: {
   const audioCache = cache ?? createChatAudioCache(dependencies);
   const pending = new Map<string, Promise<string | undefined>>();
   const prepared = new Set<string>();
-  const abort = new AbortController();
+  const generations = new Set<AbortController>();
   let queue = Promise.resolve();
   let disposed = false;
   let playbackIntent = 0;
@@ -116,7 +116,11 @@ export function createChatAudioSession(callbacks: {
     audio.load();
     audio = null;
   };
-  const stop = () => { playbackIntent++; releasePlayer(); };
+  const stop = () => {
+    playbackIntent++;
+    for (const controller of generations) controller.abort();
+    releasePlayer();
+  };
 
   const load = (message: Message): Promise<string | undefined> => {
     const { id, audioParams } = message;
@@ -131,21 +135,26 @@ export function createChatAudioSession(callbacks: {
     if (existing) return existing;
     callbacks.update(id, { audioState: "loading", audioError: undefined });
     // Local models share compute resources; do not start overlapping inference.
+    const generation = new AbortController();
+    generations.add(generation);
     const request = queue.then(async () => {
       if (disposed) return;
       try {
-        const blob = await callbacks.fetch(audioParams, abort.signal);
-        if (disposed) return;
+        const blob = await callbacks.fetch(audioParams, generation.signal);
+        if (disposed || generation.signal.aborted) return;
         const url = audioCache.put(audioParams, blob);
         callbacks.update(id, { audioState: "ready", audioUrl: url, audioError: undefined });
         return url;
       } catch (error) {
-        if (!disposed) callbacks.update(id, {
+        if (!disposed && !generation.signal.aborted) callbacks.update(id, {
           audioState: "error",
           audioError: error instanceof Error ? error.message : "语音准备失败，请重试",
         });
       }
-    }).finally(() => { pending.delete(key); });
+    }).finally(() => {
+      generations.delete(generation);
+      pending.delete(key);
+    });
     pending.set(key, request);
     queue = request.then(() => undefined);
     return request;
@@ -193,7 +202,6 @@ export function createChatAudioSession(callbacks: {
     dispose() {
       disposed = true;
       stop();
-      abort.abort();
       pending.clear();
       prepared.clear();
       if (ownedCache) audioCache.dispose();

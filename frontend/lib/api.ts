@@ -224,6 +224,12 @@ export interface ChatResponse {
   transcript?: string;
   usedMemories: MemoryReference[];
   safetyState: "normal" | "supportive_redirect" | "crisis";
+  timing: ChatTiming;
+}
+
+export interface ChatTiming {
+  firstResponseMs: number | null;
+  totalResponseMs: number;
 }
 
 export interface MemoryReference {
@@ -276,23 +282,29 @@ export async function sendTextMessage(message: string): Promise<ChatResponse> {
     audioParams: { text: data.response_text, instructText: data.instruct_text },
     usedMemories: data.used_memories || [],
     safetyState: data.safety_state || "normal",
+    timing: {
+      firstResponseMs: data.timing?.first_response_ms ?? null,
+      totalResponseMs: data.timing?.total_response_ms ?? 0,
+    },
   };
 }
 
-type ChatStreamEvent =
+export type ChatStreamEvent =
   | { type: "delta"; content: string }
   | { type: "reset" }
-  | { type: "done"; response_id: string; response_text: string; instruct_text: string; has_voice: boolean; used_memories: MemoryReference[]; safety_state: ChatResponse["safetyState"] }
+  | { type: "done"; response_id: string; response_text: string; instruct_text: string; has_voice: boolean; used_memories: MemoryReference[]; safety_state: ChatResponse["safetyState"]; timing?: { first_response_ms?: number | null; total_response_ms?: number } }
   | { type: "error"; message: string };
 
 export async function streamTextMessage(
   message: string,
   onEvent: (event: ChatStreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<ChatResponse> {
   const res = await fetch(`${BASE}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
+    signal,
   });
   if (!res.ok) throw await apiError(res, "对话失败");
   if (!res.body) throw new Error("浏览器不支持流式对话");
@@ -315,6 +327,10 @@ export async function streamTextMessage(
         audioParams: { text: event.response_text, instructText: event.instruct_text },
         usedMemories: event.used_memories || [],
         safetyState: event.safety_state || "normal",
+        timing: {
+          firstResponseMs: event.timing?.first_response_ms ?? null,
+          totalResponseMs: event.timing?.total_response_ms ?? 0,
+        },
       };
     }
   };
@@ -333,12 +349,13 @@ export async function streamTextMessage(
   return completed;
 }
 
-export async function sendVoiceMessage(audioBlob: Blob): Promise<ChatResponse> {
+export async function sendVoiceMessage(audioBlob: Blob, signal?: AbortSignal): Promise<ChatResponse> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "recording.wav");
   const res = await fetch(`${BASE}/chat/voice`, {
     method: "POST",
     body: formData,
+    signal,
   });
   if (!res.ok) {
     throw await apiError(res, "语音对话失败");
@@ -352,6 +369,10 @@ export async function sendVoiceMessage(audioBlob: Blob): Promise<ChatResponse> {
     transcript: data.transcript,
     usedMemories: data.used_memories || [],
     safetyState: data.safety_state || "normal",
+    timing: {
+      firstResponseMs: data.timing?.first_response_ms ?? null,
+      totalResponseMs: data.timing?.total_response_ms ?? 0,
+    },
   };
 }
 

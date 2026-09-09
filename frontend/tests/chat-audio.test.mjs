@@ -155,6 +155,22 @@ test("dispose aborts work and suppresses late URLs, state updates and playback",
   assert.equal(h.states.get("reply").audioState, "loading");
 });
 
+test("stopping audio aborts in-progress generation without showing an error", async () => {
+  const result = deferred();
+  let signal;
+  const h = harness(value => { signal = value; return result.promise; });
+  const pending = h.session.prepare(message(), { provider: "local", auto_play: false });
+  await tick();
+  h.session.stop();
+  assert.equal(signal.aborted, true);
+  result.resolve(new Blob(["late"]));
+  await pending;
+  assert.equal(h.count("url"), 0);
+  assert.equal(h.states.get("reply").audioState, "loading");
+  assert.equal(h.states.get("reply").audioError, undefined);
+  h.session.dispose();
+});
+
 test("newer playback intent and recording stop prevent late autoplay", async () => {
   for (const stop of [false, true]) {
     const result = deferred();

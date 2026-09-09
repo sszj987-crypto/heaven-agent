@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 import json
+import time
 import uuid
 
 from ..agent.context import TTSConfig
@@ -16,6 +17,7 @@ from .schemas import (
     ChatFeedbackUpdate,
     ChatFeedbackView,
     ChatHistoryView,
+    ChatTiming,
     ChatRequest,
     ChatResponse,
     MemoryReference,
@@ -82,6 +84,7 @@ async def chat_text(
 ):
     user_message = body.message.strip()
     _require_llm_settings(container)
+    started = time.monotonic()
     try:
         ctx = await container.agent_loop.run_once(user_message)
     except Exception as exc:
@@ -96,6 +99,7 @@ async def chat_text(
         has_voice=_voice_available(container),
         used_memories=_memory_references(ctx.retrieved_memories),
         safety_state=ctx.safety_state,
+        timing=ChatTiming(total_response_ms=_elapsed_ms(started)),
     )
 
 
@@ -109,8 +113,12 @@ async def chat_text_stream(
     _require_llm_settings(container)
 
     async def events():
+        started = time.monotonic()
+        first_response_ms: int | None = None
         try:
             async for event in container.agent_loop.stream_once(user_message):
+                if event["type"] == "delta" and first_response_ms is None:
+                    first_response_ms = _elapsed_ms(started)
                 if event["type"] == "done":
                     ctx = event["context"]
                     payload = {
@@ -124,6 +132,10 @@ async def chat_text_stream(
                             for item in _memory_references(ctx.retrieved_memories)
                         ],
                         "safety_state": ctx.safety_state,
+                        "timing": {
+                            "first_response_ms": first_response_ms,
+                            "total_response_ms": _elapsed_ms(started),
+                        },
                     }
                 else:
                     payload = event
@@ -143,6 +155,7 @@ async def chat_voice(
     audio: UploadFile = File(...),
     container: ApplicationContainer = Depends(get_container),
 ):
+    started = time.monotonic()
     if not container.voice_installed:
         raise HTTPException(status_code=503, detail="语音组件未安装，请使用文字对话或安装语音组件")
     _require_llm_settings(container)
@@ -175,6 +188,7 @@ async def chat_voice(
         transcript=text,
         used_memories=_memory_references(ctx.retrieved_memories),
         safety_state=ctx.safety_state,
+        timing=ChatTiming(total_response_ms=_elapsed_ms(started)),
     )
 
 
@@ -242,6 +256,10 @@ def _require_llm_settings(container: ApplicationContainer) -> None:
 
 def _new_response_id() -> str:
     return f"reply_{uuid.uuid4().hex}"
+
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)
 
 
 def _voice_available(container: ApplicationContainer) -> bool:

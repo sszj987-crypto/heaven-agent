@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 import asyncio
 import io
+import json
 import tempfile
 from pathlib import Path
 
@@ -285,6 +286,9 @@ def test_chat_response_includes_memory_provenance():
         "source_type": "import",
     }]
     assert response.json()["response_id"].startswith("reply_")
+    assert response.json()["timing"]["first_response_ms"] is None
+    assert isinstance(response.json()["timing"]["total_response_ms"], int)
+    assert response.json()["timing"]["total_response_ms"] >= 0
 
 
 def test_chat_stream_response_includes_response_id():
@@ -294,6 +298,30 @@ def test_chat_stream_response_includes_response_id():
 
     assert response.status_code == 200
     assert '"response_id": "reply_' in response.text
+    assert '"timing": {' in response.text
+    assert '"first_response_ms": null' in response.text
+
+
+def test_chat_stream_reports_first_response_timing():
+    class StreamingAgent(FakeAgent):
+        async def stream_once(self, message):
+            yield {"type": "delta", "content": "测试"}
+            yield {"type": "done", "context": await self.run_once(message)}
+
+    client, container = make_client()
+    container.agent_loop = StreamingAgent()
+    with client:
+        response = client.post("/chat/stream", json={"message": "还记得吗"})
+
+    packets = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    done = next(packet for packet in packets if packet["type"] == "done")
+    assert done["timing"]["first_response_ms"] is not None
+    assert done["timing"]["first_response_ms"] >= 0
+    assert done["timing"]["total_response_ms"] >= done["timing"]["first_response_ms"]
 
 
 def test_voice_chat_response_includes_response_id(monkeypatch):
