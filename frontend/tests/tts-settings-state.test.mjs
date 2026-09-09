@@ -13,6 +13,8 @@ import {
 
 const minimaxForm = {
   provider: "minimax",
+  auto_play: false,
+  audio_cache_size: 10,
   base_url: "https://api.minimaxi.com",
   model: "speech-2.8-hd",
   api_key: "",
@@ -22,6 +24,8 @@ const minimaxForm = {
 test("unchanged MiniMax key is omitted", () => {
   assert.deepEqual(buildTTSUpdate(minimaxForm, false), {
     provider: "minimax",
+    auto_play: false,
+    audio_cache_size: 10,
     minimax: {
       base_url: "https://api.minimaxi.com",
       model: "speech-2.8-hd",
@@ -42,11 +46,18 @@ test("a replacement key is cleared after saving so an unrelated later save omits
   assert.equal(saved.keyDirty, false);
   assert.deepEqual(buildTTSUpdate({ ...saved.form, model: "speech-2.8-turbo" }, saved.keyDirty), {
     provider: "minimax",
+    auto_play: false,
+    audio_cache_size: 10,
     minimax: {
       base_url: "https://api.minimaxi.com",
       model: "speech-2.8-turbo",
     },
   });
+});
+
+test("auto play enabled survives save and secret reset", () => {
+  const saved = resetTTSFormAfterSave({ ...minimaxForm, auto_play: true });
+  assert.equal(buildTTSUpdate(saved.form, saved.keyDirty).auto_play, true);
 });
 
 

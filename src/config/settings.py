@@ -125,6 +125,8 @@ class Settings:
         self,
         provider: str | None = None,
         minimax: dict[str, object] | None = None,
+        auto_play: bool | None = None,
+        audio_cache_size: int | None = None,
     ) -> None:
         """更新 TTS 配置并写回 JSON 文件。"""
         with self._write_lock:
@@ -132,6 +134,10 @@ class Settings:
 
             if provider is not None:
                 candidate.provider = provider
+            if auto_play is not None:
+                candidate.auto_play = auto_play
+            if audio_cache_size is not None:
+                candidate.audio_cache_size = max(0, min(100, audio_cache_size))
             if candidate.provider not in ("local", "minimax"):
                 raise ValueError("不支持的语音服务")
 

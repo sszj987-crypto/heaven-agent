@@ -23,6 +23,8 @@ class MiniMaxConfig:
 class VoiceProviderConfig:
     provider: Literal["local", "minimax"] = "local"
     minimax: MiniMaxConfig = field(default_factory=MiniMaxConfig)
+    auto_play: bool = False
+    audio_cache_size: int = 10
 
 
 @dataclass
@@ -69,6 +71,8 @@ class ConfigLoader:
             minimax_data = tts_data.get("minimax", {})
             config.tts = VoiceProviderConfig(
                 provider=provider,
+                auto_play=tts_data.get("auto_play", False) is True,
+                audio_cache_size=max(0, min(100, int(tts_data.get("audio_cache_size", 10)))),
                 minimax=MiniMaxConfig(
                     base_url=minimax_data.get("base_url", config.tts.minimax.base_url),
                     api_key=minimax_data.get("api_key", config.tts.minimax.api_key),

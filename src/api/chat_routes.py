@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
+import json
 
 from ..agent.context import TTSConfig
 from ..config.logger import get_logger
@@ -63,6 +64,41 @@ async def chat_text(
         has_voice=_voice_available(container),
         used_memories=_memory_references(ctx.retrieved_memories),
         safety_state=ctx.safety_state,
+    )
+
+
+@router.post("/chat/stream")
+async def chat_text_stream(
+    body: ChatRequest,
+    container: ApplicationContainer = Depends(get_container),
+):
+    """Return reply text as SSE while retaining the normal completed-turn flow."""
+    user_message = body.message.strip()
+    _require_llm_settings(container)
+
+    async def events():
+        try:
+            async for event in container.agent_loop.stream_once(user_message):
+                if event["type"] == "done":
+                    ctx = event["context"]
+                    payload = {
+                        "type": "done",
+                        "response_text": ctx.response,
+                        "instruct_text": ctx.instruct_text or "用平静自然的语气说话。",
+                        "has_voice": _voice_available(container),
+                        "used_memories": _memory_references(ctx.retrieved_memories),
+                        "safety_state": ctx.safety_state,
+                    }
+                else:
+                    payload = event
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            error = _llm_http_error(exc)
+            yield f"data: {json.dumps({'type': 'error', 'message': error.detail}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -150,11 +186,11 @@ async def _generate_audio(tts, text: str, config: TTSConfig) -> bytes:
         ) from exc
     except Exception as exc:
         log.exception("TTS 音频生成失败, error_type=%s", type(exc).__name__)
-        raise HTTPException(status_code=500, detail="语音生成失败，请重试") from exc
+        raise HTTPException(status_code=500, detail="语音准备失败，请重试") from exc
 
     audio = b"".join(chunks)
     if not audio:
-        raise HTTPException(status_code=500, detail="语音生成失败，请重试")
+        raise HTTPException(status_code=500, detail="语音准备失败，请重试")
     return audio
 
 

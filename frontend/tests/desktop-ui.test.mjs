@@ -18,6 +18,18 @@ const tts = {
   minimax: { base_url: "https://example.test/speech", model: "saved-speech-model", api_key_configured: true },
 };
 
+test("voice autoplay is off for old settings and reflects a saved preference", () => {
+  for (const enabled of [undefined, false, true]) {
+    const html = renderComponent("components/settings/TTSSettingsSection.tsx#TTSSettingsSection", {
+      tts: { ...tts, auto_play: enabled }, onSaved: async () => {},
+    });
+    assert.match(html, /自动播放语音/);
+    const toggle = html.match(/<input[^>]*type="checkbox"[^>]*>/)?.[0];
+    assert.ok(toggle);
+    assert.equal(toggle.includes("checked"), enabled === true);
+  }
+});
+
 test("MiniMax keeps saved advanced values in a closed disclosure and its key outside it", () => {
   const html = renderComponent("components/settings/TTSSettingsSection.tsx#TTSSettingsSection", { tts, onSaved: async () => {} });
   const advanced = html.match(/<details\b[^>]*>.*?<\/details>/s)?.[0];

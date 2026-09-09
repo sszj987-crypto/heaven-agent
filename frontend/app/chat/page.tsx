@@ -6,16 +6,23 @@ import {
   deleteHistory,
   fetchAudio,
   fetchHistory,
-  sendTextMessage,
+  fetchSettings,
+  type TTSSettings,
+  streamTextMessage,
   sendVoiceMessage,
 } from "@/lib/api";
 import {
   createAssistantMessage,
   voicePhasePresentation,
-  withAudioState,
   type ChatPhase,
   type Message,
 } from "./chat-state";
+import {
+  configureChatAudioCache,
+  createChatAudioSession,
+  findCachedChatAudio,
+  getSharedChatAudioCache,
+} from "./chat-audio";
 
 function requestError(error: unknown, fallback: string): string {
   if (error instanceof TypeError && error.message === "Failed to fetch") {
@@ -32,117 +39,119 @@ export default function ChatPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const pressingRef = useRef(false);
   const chunksRef = useRef<Blob[]>([]);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const objectUrlsRef = useRef(new Set<string>());
+  const audioSessionRef = useRef<ReturnType<typeof createChatAudioSession> | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const epochRef = useRef(0);
+  const [voiceSettings, setVoiceSettings] = useState<TTSSettings | null>(null);
+
+  const newAudioSession = useCallback(() => createChatAudioSession({
+    fetch: fetchAudio,
+    update: (id, patch) => setMessages(current => current.map(message =>
+      message.id === id ? { ...message, ...patch } : message
+    )),
+  }, undefined, getSharedChatAudioCache()), []);
 
   useEffect(() => {
-    const objectUrls = objectUrlsRef.current;
+    const conversationEpoch = epochRef;
+    audioSessionRef.current = newAudioSession();
     return () => {
+      conversationEpoch.current++;
       pressingRef.current = false;
       const recorder = mediaRecorderRef.current;
-      if (recorder?.state === "recording") recorder.stop();
-      audioRef.current?.pause();
-      audioRef.current = null;
-      objectUrls.forEach((url) => URL.revokeObjectURL(url));
-      objectUrls.clear();
+      if (recorder) {
+        recorder.onstop = null;
+        recorder.ondataavailable = null;
+        recorder.onerror = null;
+        if (recorder.state === "recording") recorder.stop();
+      }
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+      audioSessionRef.current?.dispose();
+      audioSessionRef.current = null;
     };
-  }, []);
+  }, [newAudioSession]);
 
   useEffect(() => {
+    let cancelled = false;
+    const epoch = epochRef.current;
     fetchHistory()
       .then((history) => {
+        if (cancelled || epoch !== epochRef.current) return;
         const restored: Message[] = history
           .filter((message) => message.role === "user" || message.role === "assistant")
           .map((message) => ({
+            id: crypto.randomUUID(),
             role: message.role as "user" | "assistant",
             content: message.content,
+            ...(message.role === "assistant" && findCachedChatAudio(message.content)
+              ? (() => {
+                const cached = findCachedChatAudio(message.content)!;
+                return { audioParams: cached.params, audioState: "ready" as const, audioUrl: cached.url };
+              })()
+              : {}),
           }));
-        if (restored.length > 0) setMessages(restored);
+        if (restored.length > 0) setMessages(current => current.length ? current : restored);
       })
       .catch(() => undefined);
+    fetchSettings()
+      .then(settings => {
+        if (cancelled) return;
+        configureChatAudioCache(settings.tts.audio_cache_size);
+        setVoiceSettings(settings.tts);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
   }, []);
 
-  const updateMessage = useCallback(
-    (index: number, update: (message: Message) => Message) => {
-      setMessages((current) => current.map((message, itemIndex) =>
-        itemIndex === index ? update(message) : message
-      ));
-    },
-    [],
-  );
-
-  const playAudioUrl = useCallback((url: string, index: number) => {
-    audioRef.current?.pause();
-    const audio = new Audio(url);
-    audioRef.current = audio;
-    audio.onended = () => {
-      if (audioRef.current === audio) audioRef.current = null;
-    };
-    audio.onerror = () => {
-      if (audioRef.current === audio) audioRef.current = null;
-      updateMessage(index, (message) =>
-        withAudioState(message, "error", "语音播放失败，请重试")
-      );
-    };
-    audio.play()
-      .then(() => {
-        updateMessage(index, (message) => withAudioState(message, "ready"));
-      })
-      .catch((error: unknown) => {
-        if (audioRef.current === audio) audioRef.current = null;
-        const blocked = error instanceof DOMException && error.name === "NotAllowedError";
-        updateMessage(index, (message) => withAudioState(
-          message,
-          "error",
-          blocked ? "语音已生成，请再次点击播放" : "语音播放失败，请重试",
-        ));
-      });
-  }, [updateMessage]);
+  useEffect(() => {
+    if (!voiceSettings) return;
+    for (const message of messages) {
+      void audioSessionRef.current?.prepare(message, voiceSettings);
+    }
+  }, [messages, voiceSettings]);
 
   const handlePlayAudio = useCallback(async (index: number) => {
     const message = messages[index];
-    if (!message?.audioParams || message.audioState === "loading") return;
-
-    if (message.audioUrl) {
-      updateMessage(index, (current) => withAudioState(current, "ready"));
-      playAudioUrl(message.audioUrl, index);
-      return;
-    }
-
-    updateMessage(index, (current) => withAudioState(current, "loading"));
-    try {
-      const audioBlob = await fetchAudio(message.audioParams);
-      const url = URL.createObjectURL(audioBlob);
-      objectUrlsRef.current.add(url);
-      updateMessage(index, (current) => ({
-        ...withAudioState(current, "ready"),
-        audioUrl: url,
-      }));
-      playAudioUrl(url, index);
-    } catch (error) {
-      updateMessage(index, (current) => withAudioState(
-        current,
-        "error",
-        requestError(error, "语音生成失败，请重试"),
-      ));
-    }
-  }, [messages, playAudioUrl, updateMessage]);
+    if (message) await audioSessionRef.current?.play(message);
+  }, [messages]);
 
   const handleSendText = useCallback(async () => {
     if (!input.trim() || phase !== "idle") return;
     const text = input.trim();
+    const epoch = epochRef.current;
+    audioSessionRef.current?.stop();
     setInput("");
     setInteractionError("");
     setMessages((current) => [...current, { role: "user", content: text }]);
     setPhase("replying");
+    const messageId = crypto.randomUUID();
 
     try {
-      const response = await sendTextMessage(text);
-      setMessages((current) => [...current, createAssistantMessage(response)]);
+      setMessages((current) => [...current, {
+        id: messageId,
+        role: "assistant",
+        content: "",
+      }]);
+      const response = await streamTextMessage(text, (event) => {
+        if (epoch !== epochRef.current) return;
+        setMessages((current) => current.map((message) => {
+          if (message.id !== messageId) return message;
+          if (event.type === "delta") return { ...message, content: message.content + event.content };
+          if (event.type === "reset") return { ...message, content: "" };
+          return message;
+        }));
+      });
+      if (epoch !== epochRef.current) return;
+      setMessages((current) => current.map((message) => message.id === messageId
+        ? { ...createAssistantMessage(response), id: messageId }
+        : message));
     } catch (error) {
-      setInteractionError(requestError(error, "回复失败，请重试"));
+      if (epoch === epochRef.current) {
+        setMessages((current) => current.filter((message) => message.id !== messageId));
+        setInteractionError(requestError(error, "回复失败，请重试"));
+      }
     } finally {
-      setPhase("idle");
+      if (epoch === epochRef.current) setPhase("idle");
     }
   }, [input, phase]);
 
@@ -155,16 +164,19 @@ export default function ChatPage() {
 
   const startRecording = useCallback(async () => {
     if (phase !== "idle") return;
+    const epoch = epochRef.current;
+    audioSessionRef.current?.stop();
     pressingRef.current = true;
     setInteractionError("");
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!pressingRef.current) {
+      if (!pressingRef.current || epoch !== epochRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
 
+      streamRef.current = stream;
       const webmSupported = typeof MediaRecorder.isTypeSupported === "function"
         && MediaRecorder.isTypeSupported("audio/webm");
       const recorder = new MediaRecorder(
@@ -188,6 +200,8 @@ export default function ChatPage() {
 
       recorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        if (epoch !== epochRef.current) return;
         mediaRecorderRef.current = null;
         const mimeType = recorder.mimeType || chunksRef.current[0]?.type || "audio/webm";
         const audioBlob = new Blob(chunksRef.current, { type: mimeType });
@@ -201,21 +215,25 @@ export default function ChatPage() {
 
         try {
           const response = await sendVoiceMessage(audioBlob);
+          if (epoch !== epochRef.current) return;
           setMessages((current) => [
             ...current,
             { role: "user", content: response.transcript || "[未能显示语音转写]" },
             createAssistantMessage(response),
           ]);
         } catch (error) {
-          setInteractionError(requestError(error, "语音识别失败，请重试"));
+          if (epoch === epochRef.current) setInteractionError(requestError(error, "语音识别失败，请重试"));
         } finally {
-          setPhase("idle");
+          if (epoch === epochRef.current) setPhase("idle");
         }
       };
 
       recorder.start();
       setPhase("recording");
     } catch (error) {
+      if (epoch !== epochRef.current) return;
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
       pressingRef.current = false;
       setPhase("idle");
       setInteractionError(requestError(error, "无法访问麦克风，请检查浏览器权限"));
@@ -232,17 +250,20 @@ export default function ChatPage() {
 
   const handleDelete = async () => {
     if (!confirm("确定要清空当前对话吗？原记录会归档到本地回收目录，可手工恢复。")) return;
+    const epoch = epochRef.current;
     try {
       await deleteHistory();
-      audioRef.current?.pause();
-      audioRef.current = null;
-      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-      objectUrlsRef.current.clear();
+      if (epoch !== epochRef.current) return;
+      epochRef.current++;
+      audioSessionRef.current?.dispose();
+      audioSessionRef.current = newAudioSession();
+      pressingRef.current = false;
+      if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
       setMessages([]);
       setInteractionError("");
       setPhase("idle");
     } catch {
-      setInteractionError("删除失败，请重试");
+      if (epoch === epochRef.current) setInteractionError("删除失败，请重试");
     }
   };
 
@@ -265,7 +286,7 @@ export default function ChatPage() {
         )}
 
         {messages.map((message, index) => (
-          <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+          <div key={message.id ?? index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[min(80%,720px)] [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
               message.role === "user"
                 ? "bg-white/10 text-white/90"
@@ -289,7 +310,7 @@ export default function ChatPage() {
                       </svg>
                     )}
                     {message.audioState === "loading"
-                      ? "正在生成语音…"
+                      ? "正在准备语音…"
                       : message.audioState === "error"
                         ? "重试播放"
                         : "播放语音"}
@@ -370,7 +391,7 @@ export default function ChatPage() {
               : phase === "transcribing"
                 ? "正在识别你的语音…"
                 : phase === "replying"
-                  ? "正在生成回复…"
+                  ? "正在回复…"
                   : "输入消息，Enter 发送"
           }
           disabled={busy}

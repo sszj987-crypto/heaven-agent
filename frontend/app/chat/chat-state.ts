@@ -5,6 +5,7 @@ export type ChatPhase = "idle" | "recording" | "transcribing" | "replying";
 export type AudioState = "idle" | "loading" | "ready" | "error";
 
 export type Message = {
+  id?: string;
   role: "user" | "assistant";
   content: string;
   audioParams?: { text: string; instructText: string };
@@ -26,13 +27,14 @@ export function voicePhasePresentation(phase: ChatPhase): {
     return { side: "user", label: "正在识别你的语音…" };
   }
   if (phase === "replying") {
-    return { side: "assistant", label: "正在生成回复…" };
+    return { side: "assistant", label: "正在回复…" };
   }
   return { side: null, label: "" };
 }
 
 export function createAssistantMessage(response: ChatResponse): Message {
   return {
+    id: crypto.randomUUID(),
     role: "assistant",
     content: response.responseText,
     audioParams: response.hasVoice ? response.audioParams : undefined,

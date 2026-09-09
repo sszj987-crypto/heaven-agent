@@ -33,6 +33,8 @@ export type TTSProvider = "local" | "minimax";
 
 export interface TTSSettings {
   provider: TTSProvider;
+  auto_play: boolean;
+  audio_cache_size: number;
   minimax: {
     base_url: string;
     model: string;
@@ -42,6 +44,8 @@ export interface TTSSettings {
 
 export interface TTSSettingsUpdate {
   provider: TTSProvider;
+  auto_play: boolean;
+  audio_cache_size: number;
   minimax: {
     base_url: string;
     model: string;
@@ -247,6 +251,59 @@ export async function sendTextMessage(message: string): Promise<ChatResponse> {
   };
 }
 
+type ChatStreamEvent =
+  | { type: "delta"; content: string }
+  | { type: "reset" }
+  | { type: "done"; response_text: string; instruct_text: string; has_voice: boolean; used_memories: MemoryReference[]; safety_state: ChatResponse["safetyState"] }
+  | { type: "error"; message: string };
+
+export async function streamTextMessage(
+  message: string,
+  onEvent: (event: ChatStreamEvent) => void,
+): Promise<ChatResponse> {
+  const res = await fetch(`${BASE}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) throw await apiError(res, "对话失败");
+  if (!res.body) throw new Error("浏览器不支持流式对话");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  let completed: ChatResponse | undefined;
+  const consume = (packet: string) => {
+    const data = packet.split("\n").find(line => line.startsWith("data: "))?.slice(6);
+    if (!data) return;
+    const event = JSON.parse(data) as ChatStreamEvent;
+    onEvent(event);
+    if (event.type === "error") throw new Error(event.message);
+    if (event.type === "done") {
+      completed = {
+        responseText: event.response_text,
+        hasVoice: event.has_voice,
+        audioParams: { text: event.response_text, instructText: event.instruct_text },
+        usedMemories: event.used_memories || [],
+        safetyState: event.safety_state || "normal",
+      };
+    }
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    buffered += decoder.decode(value, { stream: !done });
+    let separator;
+    while ((separator = buffered.indexOf("\n\n")) >= 0) {
+      consume(buffered.slice(0, separator));
+      buffered = buffered.slice(separator + 2);
+    }
+    if (done) break;
+  }
+  if (buffered) consume(buffered);
+  if (!completed) throw new Error("对话流意外结束，请重试");
+  return completed;
+}
+
 export async function sendVoiceMessage(audioBlob: Blob): Promise<ChatResponse> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "recording.wav");
@@ -336,15 +393,16 @@ export async function deleteHistory(): Promise<void> {
   if (!res.ok) throw await apiError(res, "清空会话失败");
 }
 
-export async function fetchAudio(audioParams: { text: string; instructText: string }): Promise<Blob> {
+export async function fetchAudio(audioParams: { text: string; instructText: string }, signal?: AbortSignal): Promise<Blob> {
   const res = await fetch(`${BASE}/chat/audio`, {
+    signal,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text: audioParams.text, instruct_text: audioParams.instructText }),
   });
   if (!res.ok) throw await apiError(res, "音频合成失败");
   const blob = await res.blob();
-  if (blob.size === 0) throw new Error("语音生成失败，请重试");
+  if (blob.size === 0) throw new Error("语音准备失败，请重试");
   return blob;
 }
 

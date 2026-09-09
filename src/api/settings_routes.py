@@ -38,6 +38,8 @@ async def get_settings(container: ApplicationContainer = Depends(get_container))
         },
         "tts": {
             "provider": settings.tts.provider,
+            "auto_play": settings.tts.auto_play,
+            "audio_cache_size": settings.tts.audio_cache_size,
             "minimax": {
                 "base_url": settings.tts.minimax.base_url,
                 "model": settings.tts.minimax.model,
@@ -81,7 +83,15 @@ async def update_settings(
                     for key, value in (tts_update.get("minimax") or {}).items()
                     if value is not None
                 }
-                if tts_update.get("provider") is not None or minimax_update:
+                provider_changed = (
+                    tts_update.get("provider") is not None
+                    and tts_update["provider"] != settings.tts.provider
+                )
+                minimax_changed = any(
+                    value != getattr(settings.tts.minimax, key)
+                    for key, value in minimax_update.items()
+                )
+                if provider_changed or minimax_changed:
                     candidate_tts = deepcopy(settings.tts)
                     if tts_update.get("provider") is not None:
                         candidate_tts.provider = tts_update["provider"]
@@ -97,6 +107,8 @@ async def update_settings(
                         settings.update_tts(
                             provider=tts_update.get("provider"),
                             minimax=minimax_update or None,
+                            auto_play=tts_update.get("auto_play"),
+                            audio_cache_size=tts_update.get("audio_cache_size"),
                         )
                     except Exception:
                         try:
@@ -105,6 +117,12 @@ async def update_settings(
                             log.warning("未采用的语音服务关闭失败")
                         raise
                     await container.replace_voice(replacement)
+                elif (tts_update.get("auto_play") is not None
+                      or tts_update.get("audio_cache_size") is not None):
+                    settings.update_tts(
+                        auto_play=tts_update.get("auto_play"),
+                        audio_cache_size=tts_update.get("audio_cache_size"),
+                    )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     if body.log_level is not None:

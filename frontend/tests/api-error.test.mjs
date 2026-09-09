@@ -106,7 +106,7 @@ test("audio client rejects a zero-byte successful response", async () => {
   try {
     await assert.rejects(
       () => fetchAudio({ text: "你好", instructText: "平静地说" }),
-      /语音生成失败，请重试/,
+      /语音准备失败，请重试/,
     );
   } finally {
     globalThis.fetch = previousFetch;

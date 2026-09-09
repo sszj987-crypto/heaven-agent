@@ -33,6 +33,8 @@ export default function SettingsPage() {
           llm: { base_url: "", model: "", temperature: 0.7, api_key_configured: false },
           tts: {
             provider: "local",
+            auto_play: false,
+            audio_cache_size: 10,
             minimax: { base_url: "https://api.minimaxi.com", model: "speech-2.8-hd", api_key_configured: false },
           },
           log_level: "error",

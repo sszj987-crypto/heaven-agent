@@ -17,6 +17,62 @@ log = get_logger("agent")
 _DEFAULT_INSTRUCT = "用平静自然的语气说话。"
 
 
+class _ReplyStreamDecoder:
+    """Extract the JSON ``reply`` string as the model produces it."""
+
+    def __init__(self):
+        self._raw = ""
+        self._position = 0
+        self._started = False
+        self._finished = False
+        self._escaped = False
+        self._unicode = ""
+
+    def feed(self, chunk: str) -> str:
+        self._raw += chunk
+        if not self._started:
+            marker = '"reply"'
+            key = self._raw.find(marker)
+            if key < 0:
+                return ""
+            colon = self._raw.find(":", key + len(marker))
+            if colon < 0:
+                return ""
+            quote = self._raw.find('"', colon + 1)
+            if quote < 0:
+                return ""
+            self._started = True
+            self._position = quote + 1
+
+        output: list[str] = []
+        while self._position < len(self._raw) and not self._finished:
+            char = self._raw[self._position]
+            self._position += 1
+            if self._unicode:
+                self._unicode += char
+                if len(self._unicode) == 6:
+                    try:
+                        output.append(chr(int(self._unicode[2:], 16)))
+                    except ValueError:
+                        output.append(self._unicode)
+                    self._unicode = ""
+                continue
+            if self._escaped:
+                self._escaped = False
+                if char == "u":
+                    self._unicode = "\\u"
+                else:
+                    output.append({"n": "\n", "r": "\r", "t": "\t", "b": "\b", "f": "\f"}.get(char, char))
+                continue
+            if char == "\\":
+                self._escaped = True
+            elif char == '"':
+                self._finished = True
+            else:
+                output.append(char)
+        return "".join(output)
+
+
 def _parse_llm_response(raw: str) -> tuple[str, str]:
     """
     从 LLM 响应中提取 reply 和 instruct。
@@ -122,9 +178,18 @@ class AgentLoop:
         serialized to prevent history and persistence from interleaving.
         """
         async with self._turn_lock:
-            return await self._run_unlocked(user_message)
+            async for event in self._stream_unlocked(user_message):
+                if event["type"] == "done":
+                    return event["context"]
+        raise RuntimeError("对话未返回结果")
 
-    async def _run_unlocked(self, user_message: str) -> PipelineContext:
+    async def stream_once(self, user_message: str) -> AsyncGenerator[dict, None]:
+        """Run one turn and yield visible reply deltas followed by its context."""
+        async with self._turn_lock:
+            async for event in self._stream_unlocked(user_message):
+                yield event
+
+    async def _stream_unlocked(self, user_message: str) -> AsyncGenerator[dict, None]:
         t_start = time.monotonic()
         log.info("══════ AgentLoop.run 开始, user_message=%s ══════", user_message[:60])
         ctx = PipelineContext(user_message=user_message)
@@ -138,7 +203,8 @@ class AgentLoop:
             if self._history_path:
                 self._messages.save_to_file(self._history_path)
             log.warning("高风险输入触发现实支持回应，跳过角色化模型")
-            return ctx
+            yield {"type": "done", "context": ctx}
+            return
 
         # ── PreLLM ──
         t_prellm = time.monotonic()
@@ -160,9 +226,15 @@ class AgentLoop:
             ctx.need_regenerate = False
             ctx.response = ""
             ctx.instruct_text = ""
+            decoder = _ReplyStreamDecoder()
+            if attempt:
+                yield {"type": "reset"}
             t_llm = time.monotonic()
             async for chunk in self._llm.stream(ctx.llm_messages):
                 ctx.response += chunk
+                reply_chunk = decoder.feed(chunk)
+                if reply_chunk:
+                    yield {"type": "delta", "content": reply_chunk}
             log.debug("LLM 流式耗时=%.2fs", time.monotonic() - t_llm)
             log.debug("LLM 原始响应已接收, len=%d", len(ctx.response))
 
@@ -195,7 +267,7 @@ class AgentLoop:
         log.info("══════ AgentLoop.run 完成, 总耗时=%.2fs, reply_len=%d, instruct=%s, turns=%d ══════",
                  total_elapsed, len(ctx.response), ctx.instruct_text, self._messages.conversation_turns)
 
-        return ctx
+        yield {"type": "done", "context": ctx}
 
     def update_llm_client(self, client) -> None:
         self._llm = client

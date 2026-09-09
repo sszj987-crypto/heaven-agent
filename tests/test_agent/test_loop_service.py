@@ -48,6 +48,27 @@ async def test_run_once_serializes_concurrent_turns_for_one_soul():
     assert [message["content"] for message in loop.messages] == ["第一条", "收到", "第二条", "收到"]
 
 
+async def test_stream_once_emits_reply_deltas_before_the_completed_context():
+    class ChunkedLLM:
+        async def stream(self, _messages):
+            for chunk in ('{"reply":"你', '好\\n\\u5440",', '"instruct":"温柔地说"}'):
+                yield chunk
+
+    loop = AgentLoop(
+        llm=ChunkedLLM(),
+        pipeline=FakePipeline(),
+        max_conversation_turns=20,
+        max_regenerate=0,
+    )
+
+    events = [event async for event in loop.stream_once("你好")]
+
+    assert "".join(event["content"] for event in events if event["type"] == "delta") == "你好\n呀"
+    assert events[-1]["type"] == "done"
+    assert events[-1]["context"].response == "你好\n呀"
+    assert events[-1]["context"].instruct_text == "温柔地说"
+
+
 def test_update_llm_client_changes_subsequent_client():
     first = MeasuringLLM()
     second = MeasuringLLM()

@@ -54,8 +54,12 @@ class FakeSettings:
     def update_log_level(self, level):
         self.log_level = level
 
-    def update_tts(self, provider=None, minimax=None):
+    def update_tts(self, provider=None, minimax=None, auto_play=None, audio_cache_size=None):
         self.tts_updated = {"provider": provider, "minimax": minimax}
+        if auto_play is not None:
+            self.tts.auto_play = auto_play
+        if audio_cache_size is not None:
+            self.tts.audio_cache_size = audio_cache_size
         if provider is not None:
             self.tts.provider = provider
         for key, value in (minimax or {}).items():
@@ -233,6 +237,34 @@ def make_client():
     return TestClient(app), container
 
 
+def test_auto_play_setting_can_be_toggled_without_replacing_voice():
+    client, container = make_client()
+    with client:
+        assert client.get("/settings").json()["tts"]["auto_play"] is False
+        for enabled in (True, False):
+            response = client.put("/settings", json={"tts": {"auto_play": enabled}})
+            assert response.status_code == 200
+            assert client.get("/settings").json()["tts"]["auto_play"] is enabled
+            assert container.voice_replaced is False
+
+
+@pytest.mark.parametrize("provider", ["local", "minimax"])
+def test_saving_auto_play_from_full_settings_form_keeps_loaded_voice(provider):
+    client, container = make_client()
+    container.settings.tts.provider = provider
+    active_voice = container.voice
+    with client:
+        for enabled in (True, False):
+            response = client.put("/settings", json={"tts": {
+                "provider": provider,
+                "auto_play": enabled,
+                "minimax": {"base_url": "https://api.minimaxi.com", "model": "speech-2.8-hd"},
+            }})
+            assert response.status_code == 200
+            assert container.voice is active_voice
+            assert client.get("/settings").json()["tts"]["auto_play"] is enabled
+
+
 def test_chat_response_includes_memory_provenance():
     client, _ = make_client()
     with client:
@@ -257,7 +289,7 @@ def test_chat_audio_rejects_empty_voice_output():
         )
 
     assert response.status_code == 500
-    assert response.json()["message"] == "语音生成失败，请重试"
+    assert response.json()["message"] == "语音准备失败，请重试"
 
 
 def test_chat_audio_rejects_tts_exception_without_private_detail():
@@ -270,7 +302,7 @@ def test_chat_audio_rejects_tts_exception_without_private_detail():
         )
 
     assert response.status_code == 500
-    assert response.json()["message"] == "语音生成失败，请重试"
+    assert response.json()["message"] == "语音准备失败，请重试"
     assert "PRIVATE_TTS_DETAIL" not in response.text
 
 
@@ -321,6 +353,8 @@ def test_settings_view_masks_minimax_key():
 
     assert payload["tts"] == {
         "provider": "minimax",
+        "auto_play": False,
+        "audio_cache_size": 10,
         "minimax": {
             "base_url": "https://api.minimaxi.com",
             "model": "speech-2.8-hd",

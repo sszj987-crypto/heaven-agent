@@ -15,6 +15,8 @@ import {
 function formFromSettings(tts: TTSSettings): TTSSettingsForm {
   return {
     provider: tts.provider,
+    auto_play: tts.auto_play ?? false,
+    audio_cache_size: tts.audio_cache_size ?? 10,
     base_url: tts.minimax.base_url,
     model: tts.minimax.model,
     api_key: "",
@@ -102,6 +104,40 @@ export function TTSSettingsSection({
           ? "在本机生成语音。语音组件安装和音色管理请前往“灵魂档案 → 语音音色”。"
           : "使用 MiniMax 云端生成语音，无需安装本地语音合成组件。音色管理请前往“灵魂档案 → 语音音色”。"}
       </p>
+
+      <label className="flex items-start gap-3 rounded-lg border border-white/10 px-4 py-3">
+        <input
+          type="checkbox"
+          checked={form.auto_play}
+          disabled={formLocked}
+          onChange={(event) => setForm((current) => ({ ...current, auto_play: event.target.checked }))}
+          aria-describedby="speech-autoplay-help"
+          className="mt-1 h-4 w-4 accent-stone-200"
+        />
+        <span>
+          <span className="text-sm text-stone-200">自动播放语音</span>
+          <span id="speech-autoplay-help" className="mt-1 block text-xs leading-5 text-stone-400">
+            默认关闭。开启并保存后，新回复的语音就绪时自动播放。本地语音会提前生成，关闭时可手动播放。
+          </span>
+        </span>
+      </label>
+
+      <label className="block max-w-xs">
+        <span className="text-sm text-stone-200">保留语音数量</span>
+        <span className="mt-1 block text-xs leading-5 text-stone-400">已播放的语音会在切换页面后保留；设为 0 可关闭缓存。</span>
+        <input
+          type="number"
+          min="0"
+          max="100"
+          value={form.audio_cache_size}
+          disabled={formLocked}
+          onChange={(event) => setForm((current) => ({
+            ...current,
+            audio_cache_size: Math.max(0, Math.min(100, Number(event.target.value) || 0)),
+          }))}
+          className="w-full mt-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white/30"
+        />
+      </label>
 
       {form.provider === "minimax" && (
         <div className="space-y-4">

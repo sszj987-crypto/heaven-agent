@@ -68,7 +68,7 @@ const server = createServer(async (request, response) => {
   }
   if (route === "POST /chat/audio") {
     calls.push({ route });
-    return json({ code: "test_audio_failed", message: "演示语音生成失败，请重试", retryable: true, request_id: "fixture-audio" }, 503);
+    return json({ code: "test_audio_failed", message: "演示语音准备失败，请重试", retryable: true, request_id: "fixture-audio" }, 503);
   }
   return json({ message: "未定义的测试接口" }, 404);
 });

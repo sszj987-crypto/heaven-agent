@@ -59,6 +59,8 @@ class MiniMaxSettingsView(APIModel):
 
 class TTSSettingsView(APIModel):
     provider: Literal["local", "minimax"]
+    auto_play: bool = False
+    audio_cache_size: int = Field(default=10, ge=0, le=100)
     minimax: MiniMaxSettingsView
 
 
@@ -83,6 +85,8 @@ class MiniMaxSettingsUpdate(APIModel):
 
 class TTSSettingsUpdate(APIModel):
     provider: Literal["local", "minimax"] | None = None
+    auto_play: bool | None = None
+    audio_cache_size: int | None = Field(default=None, ge=0, le=100)
     minimax: MiniMaxSettingsUpdate | None = None
 
 

@@ -114,6 +114,19 @@ class TestSettings:
 
         assert settings.tts.minimax.api_key == ""
 
+    def test_voice_auto_play_defaults_off_and_survives_reload(self):
+        self._write_tts(api_key="existing")
+        settings = Settings(self._config_dir)
+        assert settings.tts.auto_play is False
+        settings.update_tts(auto_play=True)
+        assert Settings(self._config_dir).tts.auto_play is True
+        settings.update_tts(minimax={"model": "another-model"})
+        assert Settings(self._config_dir).tts.auto_play is True
+        settings.update_tts(auto_play=False)
+        reloaded = Settings(self._config_dir)
+        assert reloaded.tts.auto_play is False
+        assert reloaded.tts.minimax.api_key == "existing"
+
     def test_update_circumstances_writes_back(self):
         Settings.init(self._config_dir)
         Settings.get().update_circumstances("新场景")

@@ -2,6 +2,8 @@ import type { TTSProvider, TTSSettingsUpdate } from "@/lib/api";
 
 export interface TTSSettingsForm {
   provider: TTSProvider;
+  auto_play: boolean;
+  audio_cache_size: number;
   base_url: string;
   model: string;
   api_key: string;
@@ -13,7 +15,12 @@ export function buildTTSUpdate(form: TTSSettingsForm, keyDirty: boolean): TTSSet
     model: form.model,
   };
   if (keyDirty) minimax.api_key = form.api_key;
-  return { provider: form.provider, minimax };
+  return {
+    provider: form.provider,
+    auto_play: form.auto_play,
+    audio_cache_size: form.audio_cache_size,
+    minimax,
+  };
 }
 
 export function resetTTSFormAfterSave(form: TTSSettingsForm): {
