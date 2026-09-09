@@ -14,6 +14,9 @@ export type Message = {
   audioError?: string;
   usedMemories?: MemoryReference[];
   safetyState?: "normal" | "supportive_redirect" | "crisis";
+  responseId?: string;
+  userMessage?: string;
+  feedback?: "similar" | "dissimilar";
 };
 
 export function voicePhasePresentation(phase: ChatPhase): {
@@ -32,7 +35,7 @@ export function voicePhasePresentation(phase: ChatPhase): {
   return { side: null, label: "" };
 }
 
-export function createAssistantMessage(response: ChatResponse): Message {
+export function createAssistantMessage(response: ChatResponse, userMessage = response.transcript): Message {
   return {
     id: crypto.randomUUID(),
     role: "assistant",
@@ -41,6 +44,8 @@ export function createAssistantMessage(response: ChatResponse): Message {
     audioState: response.hasVoice ? "idle" : undefined,
     usedMemories: response.usedMemories,
     safetyState: response.safetyState,
+    responseId: response.responseId,
+    userMessage,
   };
 }
 

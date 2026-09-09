@@ -92,6 +92,7 @@ class DataManagementService:
             (self._layout.daily_dir, backup / "memory" / "daily"),
             (self._layout.conversation_path, backup / "conversation.json"),
             (self._layout.candidates_path, backup / "memory" / "candidates.json"),
+            (self._layout.feedback_path, backup / "feedback.json"),
             (self._layout.onboarding_path, backup / "onboarding.json"),
         )
         existed = {source: source.exists() for source, _ in artifacts}

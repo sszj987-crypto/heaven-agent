@@ -117,12 +117,13 @@ class SoulPromptBuilder:
         if not memories:
             return ""
 
-        lines = ["【相关记忆 — 可在对话中自然引用】"]
+        lines = ["【已确认人物资料 — 可在对话中自然引用】"]
         for m in memories:
             dim = m.get("metadata", {}).get("dimension", "")
             doc = m.get("document", "").strip()
             if doc:
-                lines.append(f"- {doc}")
+                label = f"（{dim}）" if dim else ""
+                lines.append(f"- {label}{doc}")
         return "\n".join(lines) + "\n\n" if len(lines) > 1 else ""
 
     # ── Circumstances ─────────────────────────────────────

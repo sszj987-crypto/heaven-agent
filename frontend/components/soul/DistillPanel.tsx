@@ -2,43 +2,54 @@
 
 import { useRef, useState } from "react";
 
-import { distillSoul, type DistillResult } from "@/lib/api";
+import { distillSoul, previewSoulImport, type DistillResult, type ImportSpeaker } from "@/lib/api";
 import { DIMENSION_LABELS } from "./constants";
 
 
 export default function DistillPanel({
-  defaultChatName,
   onDimensionClick,
 }: {
-  defaultChatName: string;
   onDimensionClick: (dimension: string) => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
-  const [chatName, setChatName] = useState(defaultChatName);
+  const [chatName, setChatName] = useState("");
+  const [speakers, setSpeakers] = useState<ImportSpeaker[]>([]);
+  const [inspecting, setInspecting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<DistillResult | null>(null);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const selectFile = (candidate?: File) => {
+  const selectFile = async (candidate?: File) => {
     if (!candidate) return;
     if (!candidate.name.toLowerCase().endsWith(".txt")) {
       setError("只支持 .txt 格式的聊天记录");
       return;
     }
     setFile(candidate);
+    setChatName("");
+    setSpeakers([]);
     setResult(null);
     setError("");
+    setInspecting(true);
+    try {
+      setSpeakers(await previewSoulImport(candidate));
+    } catch (caught) {
+      setFile(null);
+      setError(caught instanceof Error ? caught.message : "无法解析聊天记录");
+    } finally {
+      setInspecting(false);
+    }
   };
 
   const run = async () => {
-    if (!file) return;
+    if (!file || !chatName) return;
     setRunning(true);
     setResult(null);
     setError("");
     try {
-      setResult(await distillSoul(file, chatName || undefined));
+      setResult(await distillSoul(file, chatName));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "导入分析失败");
     } finally {
@@ -59,7 +70,7 @@ export default function DistillPanel({
           onDrop={(event) => {
             event.preventDefault();
             setDragOver(false);
-            selectFile(event.dataTransfer.files[0]);
+            void selectFile(event.dataTransfer.files[0]);
           }}
           onDragOver={(event) => {
             event.preventDefault();
@@ -80,7 +91,7 @@ export default function DistillPanel({
             type="file"
             accept=".txt"
             onChange={(event) => {
-              selectFile(event.target.files?.[0]);
+              void selectFile(event.target.files?.[0]);
               event.target.value = "";
             }}
             className="hidden"
@@ -90,19 +101,44 @@ export default function DistillPanel({
           </p>
           {file && <p className="text-xs text-white/30 mt-1">{(file.size / 1024).toFixed(1)} KB</p>}
         </div>
-        <div className="space-y-1">
-          <label className="text-xs text-white/30">目标人物在聊天中的昵称</label>
-          <input
-            value={chatName}
-            onChange={(event) => setChatName(event.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white/70 outline-none focus:border-white/30"
-            placeholder="例如：奶奶"
-          />
-        </div>
+        {file && (
+          <fieldset className="space-y-2">
+            <legend className="text-xs text-white/30">选择要模拟的发言人</legend>
+            {inspecting ? (
+              <p className="text-sm text-white/40">正在识别聊天记录中的发言人…</p>
+            ) : speakers.length > 0 ? (
+              <div className="space-y-2">
+                {speakers.map((speaker) => (
+                  <label key={speaker.name} className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors ${
+                    chatName === speaker.name
+                      ? "border-blue-400/50 bg-blue-500/10 text-white/80"
+                      : "border-white/10 bg-white/[0.02] text-white/55 hover:bg-white/5"
+                  }`}>
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="target-speaker"
+                        value={speaker.name}
+                        checked={chatName === speaker.name}
+                        onChange={() => setChatName(speaker.name)}
+                      />
+                      {speaker.name}
+                      {speaker.matches_profile_name && <span className="text-xs text-blue-200/70">与档案姓名匹配</span>}
+                    </span>
+                    <span className="text-xs text-white/30">{speaker.message_count} 条</span>
+                  </label>
+                ))}
+                <p className="text-xs text-white/30">请确认发言人后再分析，系统不会自动代选。</p>
+              </div>
+            ) : (
+              <p className="text-sm text-amber-200/70">未识别到发言人，请确认文件格式。</p>
+            )}
+          </fieldset>
+        )}
         <div className="flex gap-3">
           <button
             onClick={run}
-            disabled={!file || running}
+            disabled={!file || !chatName || running || inspecting}
             className="px-4 py-2 text-sm rounded-lg bg-blue-500/20 border border-blue-500/30 disabled:opacity-30"
           >
             {running ? "分析中..." : "开始分析"}
@@ -111,6 +147,8 @@ export default function DistillPanel({
             <button
               onClick={() => {
                 setFile(null);
+                setChatName("");
+                setSpeakers([]);
                 setResult(null);
                 setError("");
               }}

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 import asyncio
 import io
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from src.api.settings_routes import update_settings, upload_voice_sample
 from src.config.loader import LLMConfig, MiniMaxConfig, VoiceProviderConfig
 from src.main import create_app
 from src.services.jobs import JobManager
+from src.services.feedback import FeedbackStore
 from src.services.voice_installation import (
     VoiceInstallationInProgress,
     VoiceInstallationStatus,
@@ -81,6 +83,9 @@ class FakeAgent:
         }]
         return ctx
 
+    async def stream_once(self, message):
+        yield {"type": "done", "context": await self.run_once(message)}
+
 
 class EmptyVoice:
     has_reference = True
@@ -137,6 +142,8 @@ class FakeContainer:
     def __init__(self):
         self.settings = FakeSettings()
         self.layout = SimpleNamespace(data_root=Path("/data"), voice_dir=Path("/data/voice"))
+        self.soul_loader = SimpleNamespace(load=lambda: SimpleNamespace(name="王奶奶"))
+        self.feedback = FeedbackStore(Path(tempfile.mkdtemp()) / "feedback.json")
         self.root = Path("/project")
         self.soul_lock = asyncio.Lock()
         self.agent_loop = FakeAgent()
@@ -223,8 +230,8 @@ class FakeContainer:
             skill_card=None,
         )
 
-    def _queue_import(self, result, raw_text):
-        self.queued_import = (result, raw_text)
+    def _queue_import(self, result, raw_text, **kwargs):
+        self.queued_import = (result, raw_text, kwargs)
         return [SimpleNamespace(id="candidate_1")]
 
     async def close(self):
@@ -277,6 +284,87 @@ def test_chat_response_includes_memory_provenance():
         "dimension": "personal_traits",
         "source_type": "import",
     }]
+    assert response.json()["response_id"].startswith("reply_")
+
+
+def test_chat_stream_response_includes_response_id():
+    client, _ = make_client()
+    with client:
+        response = client.post("/chat/stream", json={"message": "还记得吗"})
+
+    assert response.status_code == 200
+    assert '"response_id": "reply_' in response.text
+
+
+def test_voice_chat_response_includes_response_id(monkeypatch):
+    client, container = make_client()
+    container.voice_installed = True
+
+    class SuccessfulASR:
+        async def transcribe(self, _audio):
+            return "语音转写"
+
+    monkeypatch.setattr("src.api.chat_routes.create_asr_service", lambda: SuccessfulASR())
+    with client:
+        response = client.post(
+            "/chat/voice",
+            files={"audio": ("voice.wav", b"RIFFdata", "audio/wav")},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["response_id"].startswith("reply_")
+
+
+def test_chat_feedback_is_upserted_and_counted():
+    client, _ = make_client()
+    payload = {
+        "user_message": "你今天好吗？",
+        "response_text": "我很好呀。",
+        "rating": "dissimilar",
+        "reasons": ["style", "relationship"],
+        "suggestion": "她会先叫我的小名。",
+    }
+    with client:
+        first = client.put("/chat/feedback/reply_test", json=payload)
+        replacement = client.put("/chat/feedback/reply_test", json={
+            **payload,
+            "rating": "similar",
+            "reasons": [],
+            "suggestion": "",
+        })
+        stats = client.get("/chat/feedback/stats")
+
+    assert first.status_code == 200
+    assert replacement.status_code == 200
+    assert stats.json() == {
+        "total": 1,
+        "similar": 1,
+        "dissimilar": 0,
+        "similar_rate": 1.0,
+        "reasons": {"fact": 0, "other": 0, "relationship": 0, "response": 0, "style": 0},
+    }
+
+
+def test_import_preview_requires_an_explicit_existing_speaker():
+    client, container = make_client()
+    chat = "王奶奶: 今天做桂花糕\n小明: 我想吃"
+    with client:
+        preview = client.post("/soul/import-preview", files={"file": ("chat.txt", chat, "text/plain")})
+        missing = client.post("/soul/imports", files={"file": ("chat.txt", chat, "text/plain")})
+        invalid = client.post(
+            "/soul/imports",
+            files={"file": ("chat.txt", chat, "text/plain")},
+            data={"chat_name": "不存在"},
+        )
+
+    assert preview.status_code == 200
+    assert preview.json()["speakers"] == [
+        {"name": "小明", "message_count": 1, "matches_profile_name": False},
+        {"name": "王奶奶", "message_count": 1, "matches_profile_name": True},
+    ]
+    assert missing.status_code == 422
+    assert invalid.status_code == 422
+    assert container.queued_import is None
 
 
 def test_chat_audio_rejects_empty_voice_output():
@@ -846,6 +934,7 @@ def test_soul_import_returns_job_and_queues_preview_candidates():
         accepted = client.post(
             "/soul/imports",
             files={"file": ("chat.txt", "用户: 你很乐观", "text/plain")},
+            data={"chat_name": "用户"},
         )
         assert accepted.status_code == 202
         job_id = accepted.json()["job_id"]
@@ -857,6 +946,7 @@ def test_soul_import_returns_job_and_queues_preview_candidates():
 
     assert response.json()["result"]["candidate_count"] == 1
     assert container.queued_import is not None
+    assert container.queued_import[2]["source_speaker"] == "用户"
 
 
 def test_system_diagnostics_is_typed_and_secret_free():

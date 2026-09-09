@@ -41,7 +41,11 @@ class MemoryRetrieveModule(PipelineModule):
             return ctx
 
         try:
-            results = self._store.search(query, top_k=self._top_k)
+            results = self._store.search(
+                query,
+                top_k=self._top_k,
+                source_types=["profile"],
+            )
             ctx.retrieved_memories = results
             if results:
                 dims = list({r["metadata"].get("dimension", "?") for r in results})

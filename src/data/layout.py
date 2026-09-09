@@ -33,6 +33,7 @@ class SoulDataLayout:
         self.memory_db_dir = self.soul_dir / "memory" / "index"
         self.conversation_path = self.soul_dir / "conversation.json"
         self.candidates_path = self.soul_dir / "memory" / "candidates.json"
+        self.feedback_path = self.soul_dir / "feedback.json"
         self.onboarding_path = self.soul_dir / "onboarding.json"
         self.trash_dir = self.soul_dir / ".trash"
         self.migration_marker_path = self.soul_dir / ".migration-v2.json"

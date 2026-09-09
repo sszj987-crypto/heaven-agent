@@ -158,7 +158,7 @@ export default function SoulPage() {
       ) : activeTab === "voice" ? (
         <VoicePanel />
       ) : activeTab === "distill" ? (
-        <DistillPanel defaultChatName={soulName} onDimensionClick={loadDimension} />
+        <DistillPanel onDimensionClick={loadDimension} />
       ) : activeTab === "skill" ? (
         <SkillPanel />
       ) : activeTab === "memory" ? (

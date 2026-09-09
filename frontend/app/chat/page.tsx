@@ -7,7 +7,9 @@ import {
   fetchAudio,
   fetchHistory,
   fetchSettings,
+  saveChatFeedback,
   type TTSSettings,
+  type FeedbackReason,
   streamTextMessage,
   sendVoiceMessage,
 } from "@/lib/api";
@@ -43,6 +45,7 @@ export default function ChatPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const epochRef = useRef(0);
   const [voiceSettings, setVoiceSettings] = useState<TTSSettings | null>(null);
+  const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, { reasons: FeedbackReason[]; suggestion: string }>>({});
 
   const newAudioSession = useCallback(() => createChatAudioSession({
     fetch: fetchAudio,
@@ -143,7 +146,7 @@ export default function ChatPage() {
       });
       if (epoch !== epochRef.current) return;
       setMessages((current) => current.map((message) => message.id === messageId
-        ? { ...createAssistantMessage(response), id: messageId }
+        ? { ...createAssistantMessage(response, text), id: messageId }
         : message));
     } catch (error) {
       if (epoch === epochRef.current) {
@@ -219,7 +222,7 @@ export default function ChatPage() {
           setMessages((current) => [
             ...current,
             { role: "user", content: response.transcript || "[未能显示语音转写]" },
-            createAssistantMessage(response),
+            createAssistantMessage(response, response.transcript),
           ]);
         } catch (error) {
           if (epoch === epochRef.current) setInteractionError(requestError(error, "语音识别失败，请重试"));
@@ -266,6 +269,37 @@ export default function ChatPage() {
       if (epoch === epochRef.current) setInteractionError("删除失败，请重试");
     }
   };
+
+  const saveFeedback = useCallback(async (
+    message: Message,
+    rating: "similar" | "dissimilar",
+  ) => {
+    if (!message.responseId || !message.userMessage) return;
+    const draft = feedbackDrafts[message.responseId] || { reasons: [], suggestion: "" };
+    try {
+      await saveChatFeedback(message.responseId, {
+        userMessage: message.userMessage,
+        responseText: message.content,
+        rating,
+        reasons: rating === "dissimilar" ? draft.reasons : [],
+        suggestion: rating === "dissimilar" ? draft.suggestion : "",
+      });
+      setMessages(current => current.map(item => item.id === message.id ? { ...item, feedback: rating } : item));
+      setInteractionError("");
+    } catch (error) {
+      setInteractionError(requestError(error, "保存反馈失败，请重试"));
+    }
+  }, [feedbackDrafts]);
+
+  const toggleFeedbackReason = useCallback((responseId: string, reason: FeedbackReason) => {
+    setFeedbackDrafts(current => {
+      const draft = current[responseId] || { reasons: [], suggestion: "" };
+      const reasons = draft.reasons.includes(reason)
+        ? draft.reasons.filter(item => item !== reason)
+        : [...draft.reasons, reason];
+      return { ...current, [responseId]: { ...draft, reasons } };
+    });
+  }, []);
 
   const phaseView = voicePhasePresentation(phase);
   const busy = phase !== "idle";
@@ -332,6 +366,81 @@ export default function ChatPage() {
                     ))}
                   </ul>
                 </details>
+              )}
+
+              {message.role === "assistant" && message.responseId && message.userMessage && (
+                <div className="mt-3 border-t border-white/5 pt-2 text-xs">
+                  {message.feedback === "similar" ? (
+                    <p className="text-emerald-200/70">已记录：像 TA</p>
+                  ) : message.feedback === "dissimilar" ? (
+                    <p className="text-amber-200/70">已记录：不太像 TA</p>
+                  ) : feedbackDrafts[message.responseId] ? (
+                    <div className="space-y-2">
+                      <p className="text-white/45">哪些地方不太像？</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {([
+                          ["fact", "事实不对"],
+                          ["style", "说话方式"],
+                          ["relationship", "称呼/关系"],
+                          ["response", "回应方式"],
+                          ["other", "其他"],
+                        ] as const).map(([reason, label]) => (
+                          <button
+                            key={reason}
+                            type="button"
+                            onClick={() => toggleFeedbackReason(message.responseId!, reason)}
+                            className={`rounded-full px-2 py-1 transition-colors ${
+                              feedbackDrafts[message.responseId!].reasons.includes(reason)
+                                ? "bg-amber-200/20 text-amber-100"
+                                : "bg-white/5 text-white/45 hover:bg-white/10"
+                            }`}
+                          >{label}</button>
+                        ))}
+                      </div>
+                      <textarea
+                        aria-label="更像 TA 的说法"
+                        value={feedbackDrafts[message.responseId].suggestion}
+                        onChange={(event) => setFeedbackDrafts(current => ({
+                          ...current,
+                          [message.responseId!]: { ...current[message.responseId!], suggestion: event.target.value },
+                        }))}
+                        placeholder="TA 更可能怎么说？（可选）"
+                        className="w-full resize-none rounded-lg border border-white/10 bg-black/10 px-2 py-1.5 text-xs text-white/70 outline-none focus:border-white/30"
+                        rows={2}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={feedbackDrafts[message.responseId].reasons.length === 0}
+                          onClick={() => void saveFeedback(message, "dissimilar")}
+                          className="rounded-md bg-amber-200/15 px-2 py-1 text-amber-100 disabled:opacity-30"
+                        >保存反馈</button>
+                        <button
+                          type="button"
+                          onClick={() => setFeedbackDrafts(current => {
+                            return Object.fromEntries(
+                              Object.entries(current).filter(([id]) => id !== message.responseId),
+                            );
+                          })}
+                          className="text-white/40 hover:text-white/70"
+                        >取消</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-white/45">
+                      <span>像 TA 吗？</span>
+                      <button type="button" onClick={() => void saveFeedback(message, "similar")} className="hover:text-emerald-200">像 TA</button>
+                      <button
+                        type="button"
+                        onClick={() => setFeedbackDrafts(current => ({
+                          ...current,
+                          [message.responseId!]: { reasons: [], suggestion: "" },
+                        }))}
+                        className="hover:text-amber-200"
+                      >不太像</button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

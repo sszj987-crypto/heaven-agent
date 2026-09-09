@@ -61,6 +61,7 @@ class MemoryStore:
         now = datetime.now(timezone.utc).isoformat()
         meta = {
             "dimension": dimension,
+            "source_type": "profile",
             "strength": 1.0,
             "last_accessed_at": now,
             "access_count": 0,
@@ -76,7 +77,8 @@ class MemoryStore:
         return mem_id
 
     def search(self, query: str, top_k: int = 5,
-               dimensions: list[str] | None = None) -> list[dict]:
+               dimensions: list[str] | None = None,
+               source_types: list[str] | None = None) -> list[dict]:
         """语义检索 + 时间衰减重排序。
 
         先按语义相似度拉取 fetch_k（top_k × 3）条候选，
@@ -88,9 +90,12 @@ class MemoryStore:
 
         fetch_k = min(top_k * 3, self._collection.count())
         query_emb = self._embedder.encode_single(query)
-        where = None
+        filters: list[dict] = []
         if dimensions:
-            where = {"dimension": {"$in": dimensions}}
+            filters.append({"dimension": {"$in": dimensions}})
+        if source_types:
+            filters.append({"source_type": {"$in": source_types}})
+        where = filters[0] if len(filters) == 1 else {"$and": filters} if filters else None
 
         results = self._collection.query(
             query_embeddings=[query_emb],
@@ -224,6 +229,30 @@ class MemoryStore:
             self._collection.delete(ids=ids)
         log.info("记忆索引已清空, deleted=%d", len(ids))
         return len(ids)
+
+    def migrate_source_types(self) -> dict[str, int]:
+        """Remove generated chat summaries and mark legacy fact entries as profile data."""
+        result = self._collection.get(include=["metadatas"])
+        ids = result.get("ids") or []
+        metas = result.get("metadatas") or []
+        delete_ids: list[str] = []
+        update_ids: list[str] = []
+        update_metas: list[dict] = []
+        for mem_id, metadata in zip(ids, metas):
+            meta = metadata or {}
+            if meta.get("type") == "chat_summary" or meta.get("dimension") == "conversation":
+                delete_ids.append(mem_id)
+            elif meta.get("source_type") != "profile":
+                update_ids.append(mem_id)
+                update_metas.append({**meta, "source_type": "profile"})
+        if delete_ids:
+            self._collection.delete(ids=delete_ids)
+        if update_ids:
+            self._collection.update(ids=update_ids, metadatas=update_metas)
+        if delete_ids or update_ids:
+            log.info("记忆来源迁移完成, removed_summaries=%d, marked_profile=%d",
+                     len(delete_ids), len(update_ids))
+        return {"removed_summaries": len(delete_ids), "marked_profile": len(update_ids)}
 
     def upsert_dimension(self, dimension: str, entries: list[dict]) -> int:
         """全量刷新某个维度的记忆（先删后加）。返回新增条数。"""

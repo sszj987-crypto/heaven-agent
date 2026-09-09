@@ -111,6 +111,7 @@ MiniMax 的 Key 独立于 LLM Key，不能互用。在 MiniMax 开放平台的�
 data/souls/{soul_id}/
 ├── profile/           # 六维 Markdown 与 skill.md，人物事实真源
 ├── conversation.json # 当前对话历史
+├── feedback.json     # 对每条回复的本地相似度反馈，不自动改写人物
 ├── memory/
 │   ├── daily/         # 对话日记
 │   ├── index/         # ChromaDB，可由真源重建
@@ -162,9 +163,12 @@ curl http://localhost:8326/system/status
 | POST | `/system/onboarding/steps/{step}` | 显式记录人物、导入确认或声音步骤 |
 | POST | `/system/onboarding/complete` | 完成人物与导入确认后结束首次引导 |
 | POST | `/chat` | 文字对话；返回记忆来源与安全状态 |
+| PUT | `/chat/feedback/{response_id}` | 保存或更新本地“像 TA / 不像 TA”反馈 |
+| GET | `/chat/feedback/stats` | 本地反馈汇总，用于人工评测 |
 | POST | `/chat/voice` | ASR 后对话；返回真实转写 |
 | POST | `/chat/audio` | 独立 TTS，失败不影响文字回复 |
 | POST | `/soul/imports` | 创建导入预览任务，返回 `202 + job_id` |
+| POST | `/soul/import-preview` | 解析聊天记录发言人，选择目标人物后再导入 |
 | GET | `/jobs/{job_id}` | 查询后台任务进度与错误 |
 | GET | `/memory/candidates` | 查看待确认事实与来源 |
 | POST | `/memory/candidates/{id}/approve` | 编辑后确认写入 |

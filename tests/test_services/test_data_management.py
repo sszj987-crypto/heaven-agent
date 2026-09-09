@@ -65,6 +65,7 @@ def test_reset_demo_archives_user_data_before_restoring_template(tmp_path):
     (layout.voice_dir / "reference_audio.wav").write_bytes(b"private voice")
     layout.conversation_path.write_text("private chat", encoding="utf-8")
     layout.candidates_path.write_text("[]", encoding="utf-8")
+    layout.feedback_path.write_text("[]", encoding="utf-8")
     demo = tmp_path / "demo"
     demo.mkdir()
     (demo / "basic_info.md").write_text("姓名: 演示人物", encoding="utf-8")
@@ -75,9 +76,11 @@ def test_reset_demo_archives_user_data_before_restoring_template(tmp_path):
     assert (backup / "profile" / "basic_info.md").read_text(encoding="utf-8") == "姓名: PRIVATE"
     assert (backup / "voice" / "reference_audio.wav").read_bytes() == b"private voice"
     assert (backup / "conversation.json").read_text(encoding="utf-8") == "private chat"
+    assert (backup / "feedback.json").read_text(encoding="utf-8") == "[]"
     assert (layout.profile_dir / "basic_info.md").read_text(encoding="utf-8") == "姓名: 演示人物"
     assert not layout.conversation_path.exists()
     assert not layout.candidates_path.exists()
+    assert not layout.feedback_path.exists()
     assert memory.cleared is True
 
 

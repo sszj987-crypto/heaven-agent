@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 import json
+import uuid
 
 from ..agent.context import TTSConfig
 from ..config.logger import get_logger
@@ -11,6 +12,9 @@ from ..voice.minimax import MiniMaxError
 from .dependencies import MAX_AUDIO_UPLOAD_BYTES, get_container
 from .schemas import (
     AudioRequest,
+    ChatFeedbackStatsView,
+    ChatFeedbackUpdate,
+    ChatFeedbackView,
     ChatHistoryView,
     ChatRequest,
     ChatResponse,
@@ -21,6 +25,33 @@ from .schemas import (
 
 router = APIRouter()
 log = get_logger("api.chat")
+
+
+@router.put(
+    "/chat/feedback/{response_id}",
+    response_model=ChatFeedbackView,
+)
+async def save_chat_feedback(
+    response_id: str,
+    body: ChatFeedbackUpdate,
+    container: ApplicationContainer = Depends(get_container),
+):
+    try:
+        async with container.soul_lock:
+            item = container.feedback.upsert(response_id=response_id, **body.model_dump())
+        return {
+            **item.__dict__,
+            "reasons": list(item.reasons),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/chat/feedback/stats", response_model=ChatFeedbackStatsView)
+async def get_chat_feedback_stats(
+    container: ApplicationContainer = Depends(get_container),
+):
+    return container.feedback.stats()
 
 
 @router.get("/chat/history", response_model=ChatHistoryView)
@@ -59,6 +90,7 @@ async def chat_text(
     response_text = ctx.response
     instruct_text = ctx.instruct_text or "用平静自然的语气说话。"
     return ChatResponse(
+        response_id=_new_response_id(),
         response_text=response_text,
         instruct_text=instruct_text,
         has_voice=_voice_available(container),
@@ -83,10 +115,14 @@ async def chat_text_stream(
                     ctx = event["context"]
                     payload = {
                         "type": "done",
+                        "response_id": _new_response_id(),
                         "response_text": ctx.response,
                         "instruct_text": ctx.instruct_text or "用平静自然的语气说话。",
                         "has_voice": _voice_available(container),
-                        "used_memories": _memory_references(ctx.retrieved_memories),
+                        "used_memories": [
+                            item.model_dump()
+                            for item in _memory_references(ctx.retrieved_memories)
+                        ],
                         "safety_state": ctx.safety_state,
                     }
                 else:
@@ -132,6 +168,7 @@ async def chat_voice(
     response_text = ctx.response
     instruct_text = ctx.instruct_text or "用平静自然的语气说话。"
     return ChatResponse(
+        response_id=_new_response_id(),
         response_text=response_text,
         instruct_text=instruct_text,
         has_voice=_voice_available(container),
@@ -201,6 +238,10 @@ def _require_llm_settings(container: ApplicationContainer) -> None:
             status_code=400,
             detail="请先在设置页面配置 LLM 参数（Base URL、API Key、Model）",
         )
+
+
+def _new_response_id() -> str:
+    return f"reply_{uuid.uuid4().hex}"
 
 
 def _voice_available(container: ApplicationContainer) -> bool:

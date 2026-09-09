@@ -79,13 +79,9 @@ class ContextCompressModule(PipelineModule):
             )
             log.info("上下文压缩完成, 摘要=%s...", summary[:80])
 
-            if self._store:
-                self._store.add(
-                    "conversation",
-                    summary,
-                    {"type": "chat_summary"},
-                )
-                log.debug("压缩摘要已写入 ChromaDB")
+            # The summary remains in MessageManager as short-term conversation
+            # context. It is model-generated and must never enter the semantic
+            # profile-memory index as a source of character facts.
         except Exception as e:
             log.error("上下文压缩失败: %s", e)
         finally:

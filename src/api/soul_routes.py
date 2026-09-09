@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from ..config.logger import get_logger
 from ..services.container import ApplicationContainer
+from ..soul.chat_preprocessor import ChatPreprocessor
 from .dependencies import MAX_TEXT_IMPORT_BYTES, get_container
 from .schemas import (
     CircumstancesView,
@@ -9,6 +10,7 @@ from .schemas import (
     DimensionView,
     DistillResultView,
     JobAccepted,
+    ImportPreviewView,
     SkillView,
     SoulView,
     StatusView,
@@ -48,6 +50,30 @@ SCENES = {
 async def get_soul(container: ApplicationContainer = Depends(get_container)):
     profile = container.soul_loader.load()
     return {"dimensions": profile.dimensions}
+
+
+@router.post("/soul/import-preview", response_model=ImportPreviewView)
+async def preview_soul_import(
+    file: UploadFile = File(...),
+    container: ApplicationContainer = Depends(get_container),
+):
+    raw_text = await _read_text_import(file)
+    profile_name = container.soul_loader.load().name
+    preprocessed = ChatPreprocessor().process(raw_text)
+    speakers = [
+        {
+            "name": name,
+            "message_count": stats.message_count,
+            "matches_profile_name": name == profile_name,
+        }
+        for name, stats in sorted(
+            preprocessed.speakers.items(),
+            key=lambda item: (-item[1].message_count, item[0]),
+        )
+    ]
+    if not speakers:
+        raise HTTPException(status_code=422, detail="未能从聊天记录识别发言人，请检查导出格式")
+    return {"speakers": speakers}
 
 
 @router.get("/soul/circumstances", response_model=CircumstancesView)
@@ -117,6 +143,7 @@ async def distill_soul(
     container: ApplicationContainer = Depends(get_container),
 ):
     raw_text = await _read_text_import(file)
+    preprocessed = _require_target_speaker(raw_text, chat_name)
     try:
         async with container.soul_lock:
             result = await container.distiller.distill(
@@ -124,7 +151,12 @@ async def distill_soul(
                 chat_name=chat_name,
                 apply_changes=False,
             )
-            queued = container.import_reviews.queue(result, raw_text)
+            queued = container.import_reviews.queue(
+                result,
+                raw_text,
+                source_speaker=chat_name,
+                source_excerpt=_speaker_excerpt(preprocessed, chat_name),
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="导入内容格式不符合要求") from exc
     except Exception as exc:
@@ -154,6 +186,8 @@ async def create_soul_import(
     container: ApplicationContainer = Depends(get_container),
 ):
     raw_text = await _read_text_import(file)
+    preprocessed = _require_target_speaker(raw_text, chat_name)
+    source_excerpt = _speaker_excerpt(preprocessed, chat_name)
 
     async def work():
         async with container.soul_lock:
@@ -162,7 +196,12 @@ async def create_soul_import(
                 chat_name=chat_name,
                 apply_changes=False,
             )
-            queued = container.import_reviews.queue(result, raw_text)
+            queued = container.import_reviews.queue(
+                result,
+                raw_text,
+                source_speaker=chat_name,
+                source_excerpt=source_excerpt,
+            )
         payload = {
             "changes": result.changes,
             "profile": result.profile,
@@ -191,6 +230,24 @@ async def _read_text_import(file: UploadFile) -> str:
     if not raw_text.strip():
         raise HTTPException(status_code=400, detail="聊天记录为空")
     return raw_text
+
+
+def _require_target_speaker(raw_text: str, chat_name: str):
+    if not chat_name.strip():
+        raise HTTPException(status_code=422, detail="请先选择要模拟的发言人")
+    preprocessed = ChatPreprocessor().process(raw_text)
+    if chat_name not in preprocessed.speakers:
+        raise HTTPException(status_code=422, detail="所选发言人不在这份聊天记录中，请重新选择")
+    return preprocessed
+
+
+def _speaker_excerpt(preprocessed, chat_name: str, limit: int = 1_000) -> str:
+    lines = [
+        f"{chat_name}: {message['content']}"
+        for message in preprocessed.messages
+        if message["speaker"] == chat_name
+    ]
+    return "\n".join(lines)[:limit]
 
 
 def _get_current_scene_key(current: str) -> str:

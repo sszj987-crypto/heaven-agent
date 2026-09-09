@@ -64,6 +64,40 @@ class TestMemoryStore:
         for r in results:
             assert r["metadata"]["dimension"] == "hobbies"
 
+    def test_search_can_limit_results_to_confirmed_profile_source(self):
+        store = _make_store()
+        store.add("hobbies", "喜欢打游戏", {"source_type": "profile"})
+        store.add("conversation", "模型生成的聊天摘要", {
+            "source_type": "conversation_summary",
+            "type": "chat_summary",
+        })
+
+        results = store.search("游戏", source_types=["profile"])
+
+        assert [item["document"] for item in results] == ["喜欢打游戏"]
+
+    def test_source_migration_removes_chat_summaries_and_marks_legacy_entries(self):
+        store = _make_store()
+        store._collection.add(
+            ids=["legacy_profile", "legacy_summary"],
+            embeddings=[
+                store._embedder.encode_single("喜欢桂花糕"),
+                store._embedder.encode_single("模型摘要"),
+            ],
+            documents=["喜欢桂花糕", "模型摘要"],
+            metadatas=[
+                {"dimension": "personal_traits"},
+                {"dimension": "conversation", "type": "chat_summary"},
+            ],
+        )
+
+        migrated = store.migrate_source_types()
+        entries = store.get_by_dimension("personal_traits")
+
+        assert migrated == {"removed_summaries": 1, "marked_profile": 1}
+        assert store.count == 1
+        assert entries[0]["metadata"]["source_type"] == "profile"
+
     def test_empty_store_returns_empty(self):
         store = _make_store()
         assert store.search("test") == []

@@ -12,8 +12,15 @@ class ImportReviewService:
         self._store = store
         self._excerpt_limit = excerpt_limit
 
-    def queue(self, result, raw_text: str) -> list[MemoryCandidate]:
-        excerpt = raw_text.strip()[: self._excerpt_limit]
+    def queue(
+        self,
+        result,
+        raw_text: str,
+        *,
+        source_speaker: str = "",
+        source_excerpt: str | None = None,
+    ) -> list[MemoryCandidate]:
+        excerpt = (source_excerpt if source_excerpt is not None else raw_text).strip()[: self._excerpt_limit]
         queued = [
             self._store.add(
                 dimension=dimension,
@@ -21,6 +28,7 @@ class ImportReviewService:
                 source_type="import_dimension",
                 source_excerpt=excerpt,
                 confidence=0.9,
+                source_speaker=source_speaker,
             )
             for dimension in result.changes
             if result.profile.get(dimension, "").strip()
@@ -34,6 +42,7 @@ class ImportReviewService:
                     source_type="import_skill",
                     source_excerpt=excerpt,
                     confidence=0.85,
+                    source_speaker=source_speaker,
                 )
             )
         return queued

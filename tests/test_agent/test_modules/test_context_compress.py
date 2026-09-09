@@ -96,6 +96,20 @@ class TestContextCompressModule:
         assert kwargs["keep_recent"] == 6  # KEEP_RECENT
 
     @pytest.mark.asyncio
+    async def test_compress_keeps_summary_out_of_semantic_memory_store(self):
+        store = MagicMock()
+        self._module.set_deps(self._mock_llm, self._mock_messages, store)
+        self._mock_messages.conversation = [
+            {"role": "user", "content": f"msg-{index}"}
+            for index in range(8)
+        ]
+
+        await self._module._compress()
+
+        self._mock_messages.compress_conversation.assert_called_once()
+        store.add.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_compress_skips_when_few_messages(self):
         """对话消息不足时不压缩。"""
         self._mock_messages.conversation = [

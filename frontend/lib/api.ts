@@ -217,6 +217,7 @@ export async function updateDimension(dimension: string, content: string) {
 }
 
 export interface ChatResponse {
+  responseId: string;
   responseText: string;
   hasVoice: boolean;
   audioParams: { text: string; instructText: string };
@@ -232,6 +233,32 @@ export interface MemoryReference {
   source_type: string;
 }
 
+export type FeedbackReason = "fact" | "style" | "relationship" | "response" | "other";
+
+export async function saveChatFeedback(
+  responseId: string,
+  data: {
+    userMessage: string;
+    responseText: string;
+    rating: "similar" | "dissimilar";
+    reasons?: FeedbackReason[];
+    suggestion?: string;
+  },
+): Promise<void> {
+  const res = await fetch(`${BASE}/chat/feedback/${encodeURIComponent(responseId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_message: data.userMessage,
+      response_text: data.responseText,
+      rating: data.rating,
+      reasons: data.reasons || [],
+      suggestion: data.suggestion || "",
+    }),
+  });
+  if (!res.ok) throw await apiError(res, "保存反馈失败");
+}
+
 export async function sendTextMessage(message: string): Promise<ChatResponse> {
   const res = await fetch(`${BASE}/chat`, {
     method: "POST",
@@ -243,6 +270,7 @@ export async function sendTextMessage(message: string): Promise<ChatResponse> {
   }
   const data = await res.json();
   return {
+    responseId: data.response_id,
     responseText: data.response_text,
     hasVoice: data.has_voice,
     audioParams: { text: data.response_text, instructText: data.instruct_text },
@@ -254,7 +282,7 @@ export async function sendTextMessage(message: string): Promise<ChatResponse> {
 type ChatStreamEvent =
   | { type: "delta"; content: string }
   | { type: "reset" }
-  | { type: "done"; response_text: string; instruct_text: string; has_voice: boolean; used_memories: MemoryReference[]; safety_state: ChatResponse["safetyState"] }
+  | { type: "done"; response_id: string; response_text: string; instruct_text: string; has_voice: boolean; used_memories: MemoryReference[]; safety_state: ChatResponse["safetyState"] }
   | { type: "error"; message: string };
 
 export async function streamTextMessage(
@@ -281,6 +309,7 @@ export async function streamTextMessage(
     if (event.type === "error") throw new Error(event.message);
     if (event.type === "done") {
       completed = {
+        responseId: event.response_id,
         responseText: event.response_text,
         hasVoice: event.has_voice,
         audioParams: { text: event.response_text, instructText: event.instruct_text },
@@ -316,6 +345,7 @@ export async function sendVoiceMessage(audioBlob: Blob): Promise<ChatResponse> {
   }
   const data = await res.json();
   return {
+    responseId: data.response_id,
     responseText: data.response_text,
     hasVoice: data.has_voice,
     audioParams: { text: data.response_text, instructText: data.instruct_text },
@@ -446,6 +476,7 @@ export interface MemoryCandidate {
   source_type: string;
   source_excerpt: string;
   confidence: number;
+  source_speaker: string;
   status: "pending" | "approved" | "rejected";
   conflict_with?: string | null;
   created_at: string;
@@ -482,10 +513,25 @@ export interface JobStatus {
   error?: string | null;
 }
 
-export async function createSoulImport(file: File, chatName?: string): Promise<string> {
+export interface ImportSpeaker {
+  name: string;
+  message_count: number;
+  matches_profile_name: boolean;
+}
+
+export async function previewSoulImport(file: File): Promise<ImportSpeaker[]> {
   const formData = new FormData();
   formData.append("file", file);
-  if (chatName) formData.append("chat_name", chatName);
+  const res = await fetch(`${BASE}/soul/import-preview`, { method: "POST", body: formData });
+  if (!res.ok) throw await apiError(res, "无法解析聊天记录");
+  const data = await res.json();
+  return data.speakers || [];
+}
+
+export async function createSoulImport(file: File, chatName: string): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("chat_name", chatName);
   const res = await fetch(`${BASE}/soul/imports`, { method: "POST", body: formData });
   if (!res.ok) throw await apiError(res, "创建导入任务失败");
   const data = await res.json();
@@ -515,7 +561,7 @@ export async function deleteMemory(id: string): Promise<void> {
   if (!res.ok) throw await apiError(res, "无法删除记忆");
 }
 
-export async function distillSoul(file: File, chatName?: string): Promise<DistillResult> {
+export async function distillSoul(file: File, chatName: string): Promise<DistillResult> {
   const jobId = await createSoulImport(file, chatName);
   for (;;) {
     const job = await fetchJob(jobId);

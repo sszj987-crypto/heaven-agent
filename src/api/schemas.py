@@ -36,12 +36,35 @@ class MemoryReference(APIModel):
 
 
 class ChatResponse(APIModel):
+    response_id: str = ""
     response_text: str
     instruct_text: str
     has_voice: bool
     transcript: str | None = None
     used_memories: list[MemoryReference] = Field(default_factory=list)
     safety_state: SafetyState = "normal"
+
+
+class ChatFeedbackUpdate(APIModel):
+    user_message: str = Field(min_length=1, max_length=10_000)
+    response_text: str = Field(min_length=1, max_length=10_000)
+    rating: Literal["similar", "dissimilar"]
+    reasons: list[Literal["fact", "style", "relationship", "response", "other"]] = Field(default_factory=list, max_length=5)
+    suggestion: str = Field(default="", max_length=10_000)
+
+
+class ChatFeedbackView(ChatFeedbackUpdate):
+    response_id: str
+    created_at: str
+    updated_at: str
+
+
+class ChatFeedbackStatsView(APIModel):
+    total: int
+    similar: int
+    dissimilar: int
+    similar_rate: float
+    reasons: dict[str, int]
 
 
 class LLMSettingsView(APIModel):
@@ -107,6 +130,7 @@ class MemoryCandidateView(APIModel):
     source_type: str
     source_excerpt: str
     confidence: float
+    source_speaker: str = ""
     status: Literal["pending", "approved", "rejected"]
     conflict_with: str | None = None
     created_at: str
@@ -228,6 +252,16 @@ class DistillResultView(APIModel):
     candidate_ids: list[str]
     candidate_count: int
     skill_card: dict[str, str] | None = None
+
+
+class ImportSpeakerView(APIModel):
+    name: str
+    message_count: int
+    matches_profile_name: bool = False
+
+
+class ImportPreviewView(APIModel):
+    speakers: list[ImportSpeakerView]
 
 
 class MemoryEntryView(APIModel):

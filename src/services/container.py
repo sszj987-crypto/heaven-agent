@@ -20,6 +20,7 @@ from ..voice.service import DisabledVoiceService
 from ..voice.minimax import MiniMaxTTSService
 from .candidates import CandidateService
 from .data_management import DataManagementService
+from .feedback import FeedbackStore
 from .imports import ImportReviewService
 from .jobs import JobManager
 from .onboarding import OnboardingStore
@@ -42,6 +43,7 @@ class ApplicationContainer:
     candidates: CandidateStore
     candidate_service: CandidateService
     import_reviews: ImportReviewService
+    feedback: FeedbackStore
     jobs: JobManager
     onboarding: OnboardingStore
     status_service: SystemStatusService
@@ -78,6 +80,7 @@ class ApplicationContainer:
         try:
             from ..memory.store import MemoryStore
             memory_store = MemoryStore(layout.memory_db_dir)
+            memory_store.migrate_source_types()
         except (ImportError, RuntimeError) as exc:
             from ..config.logger import get_logger
             get_logger("container").warning("记忆索引不可用，降级为无检索模式: %s", exc)
@@ -106,6 +109,7 @@ class ApplicationContainer:
             candidates, soul_loader, agent_loop.invalidate_soul_cache
         )
         import_reviews = ImportReviewService(candidates)
+        feedback = FeedbackStore(layout.feedback_path)
         status_service = SystemStatusService(
             soul_id=settings.soul_id,
             loader=soul_loader,
@@ -138,6 +142,7 @@ class ApplicationContainer:
             candidates=candidates,
             candidate_service=candidate_service,
             import_reviews=import_reviews,
+            feedback=feedback,
             jobs=jobs,
             onboarding=onboarding,
             status_service=status_service,

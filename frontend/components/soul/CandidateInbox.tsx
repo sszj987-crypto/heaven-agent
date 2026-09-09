@@ -93,6 +93,7 @@ export default function CandidateInbox() {
                 />
                 <details className="mt-3 text-xs text-stone-500">
                   <summary className="cursor-pointer">查看来源</summary>
+                  {item.source_speaker && <p className="mt-2">选定发言人：{item.source_speaker}</p>}
                   <p className="mt-2 whitespace-pre-wrap rounded-lg bg-black/20 p-3 leading-5">{item.source_excerpt}</p>
                 </details>
                 <div className="mt-4 flex gap-2">

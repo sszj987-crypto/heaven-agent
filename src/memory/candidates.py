@@ -28,6 +28,7 @@ class MemoryCandidate:
     source_type: str
     source_excerpt: str
     confidence: float
+    source_speaker: str = ""
     status: str = "pending"
     conflict_with: str | None = None
     created_at: str = ""
@@ -46,6 +47,7 @@ class CandidateStore:
         source_type: str,
         source_excerpt: str,
         confidence: float,
+        source_speaker: str = "",
         conflict_with: str | None = None,
     ) -> MemoryCandidate:
         if not 0 <= confidence <= 1:
@@ -57,6 +59,7 @@ class CandidateStore:
             source_type=source_type,
             source_excerpt=source_excerpt.strip(),
             confidence=confidence,
+            source_speaker=source_speaker.strip(),
             conflict_with=conflict_with,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
