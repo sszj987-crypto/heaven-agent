@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   deleteHistory,
@@ -44,6 +44,8 @@ export default function ChatPage() {
   const audioSessionRef = useRef<ReturnType<typeof createChatAudioSession> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const epochRef = useRef(0);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const shouldRestoreLatestPositionRef = useRef(false);
   const [voiceSettings, setVoiceSettings] = useState<TTSSettings | null>(null);
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, { reasons: FeedbackReason[]; suggestion: string }>>({});
 
@@ -93,7 +95,12 @@ export default function ChatPage() {
               })()
               : {}),
           }));
-        if (restored.length > 0) setMessages(current => current.length ? current : restored);
+        if (restored.length > 0) {
+          // A remounted chat page should resume at the newest message, not the
+          // first item in the restored history.
+          shouldRestoreLatestPositionRef.current = true;
+          setMessages(current => current.length ? current : restored);
+        }
       })
       .catch(() => undefined);
     fetchSettings()
@@ -105,6 +112,15 @@ export default function ChatPage() {
       .catch(() => undefined);
     return () => { cancelled = true; };
   }, []);
+
+  useLayoutEffect(() => {
+    if (!shouldRestoreLatestPositionRef.current) return;
+    const messageList = messageListRef.current;
+    if (!messageList) return;
+
+    messageList.scrollTop = messageList.scrollHeight;
+    shouldRestoreLatestPositionRef.current = false;
+  }, [messages]);
 
   useEffect(() => {
     if (!voiceSettings) return;
@@ -314,7 +330,13 @@ export default function ChatPage() {
         </div>
       )}
 
-      <div aria-label="对话消息" role="region" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto px-8 py-6 space-y-5">
+      <div
+        ref={messageListRef}
+        aria-label="对话消息"
+        role="region"
+        tabIndex={0}
+        className="chat-message-list min-h-0 flex-1 overflow-y-auto px-8 py-6 space-y-5"
+      >
         {messages.length === 0 && phase === "idle" && (
           <p className="text-center text-white/20 mt-20">开始一段对话吧</p>
         )}
