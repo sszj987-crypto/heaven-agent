@@ -13,12 +13,14 @@ import {
 } from "./tts-settings-state";
 
 function formFromSettings(tts: TTSSettings): TTSSettingsForm {
+  const cloud = tts.provider === "openai_compatible" ? tts.openai_compatible : tts.minimax;
   return {
     provider: tts.provider,
     auto_play: tts.auto_play ?? false,
     audio_cache_size: tts.audio_cache_size ?? 10,
-    base_url: tts.minimax.base_url,
-    model: tts.minimax.model,
+    base_url: cloud.base_url,
+    model: cloud.model,
+    voice: tts.provider === "openai_compatible" ? tts.openai_compatible.voice : "",
     api_key: "",
   };
 }
@@ -41,7 +43,11 @@ export function TTSSettingsSection({
   const invalidateConnection = () => setConnectionStatus(invalidateTTSConnection);
 
   const setProvider = (provider: TTSProvider) => {
-    setForm((current) => ({ ...current, provider }));
+    const cloud = provider === "openai_compatible" ? tts.openai_compatible : tts.minimax;
+    setForm((current) => ({
+      ...current, provider, base_url: cloud.base_url, model: cloud.model,
+      voice: provider === "openai_compatible" ? tts.openai_compatible.voice : "", api_key: "",
+    }));
     invalidateConnection();
   };
 
@@ -82,7 +88,7 @@ export function TTSSettingsSection({
         <p className="text-sm leading-6 text-stone-400">将文字回复转换成声音，不影响文字回复的生成。</p>
       </header>
       <div className="flex gap-3">
-        {(["local", "minimax"] as const).map((provider) => (
+        {(["local", "minimax", "openai_compatible"] as const).map((provider) => (
           <button
             key={provider}
             onClick={() => setProvider(provider)}
@@ -94,7 +100,7 @@ export function TTSSettingsSection({
                 : "bg-white/5 border-white/10 text-white/40 hover:border-white/20 hover:text-white/60"
             }`}
           >
-            {provider === "local" ? "本地" : "MiniMax"}
+            {provider === "local" ? "本地" : provider === "minimax" ? "MiniMax" : "OpenAI 兼容"}
           </button>
         ))}
       </div>
@@ -102,7 +108,9 @@ export function TTSSettingsSection({
       <p className="text-sm leading-6 text-stone-400">
         {form.provider === "local"
           ? "在本机生成语音。语音组件安装和音色管理请前往“灵魂档案 → 语音音色”。"
-          : "使用 MiniMax 云端生成语音，无需安装本地语音合成组件。音色管理请前往“灵魂档案 → 语音音色”。"}
+          : form.provider === "minimax"
+            ? "使用 MiniMax 云端生成语音，无需安装本地语音合成组件。音色管理请前往“灵魂档案 → 语音音色”。"
+            : "使用 OpenAI / NewAPI 格式的云端语音接口，无需安装本地语音组件。在这里配置服务商提供的 voice 名称或 ID。"}
       </p>
 
       <label className="flex items-start gap-3 rounded-lg border border-white/10 px-4 py-3">
@@ -139,11 +147,11 @@ export function TTSSettingsSection({
         />
       </label>
 
-      {form.provider === "minimax" && (
+      {form.provider !== "local" && (
         <div className="space-y-4">
           <label className="block">
             <span className="text-sm text-stone-300">
-              MiniMax 语音密钥 <span className="text-xs text-stone-400">· {tts.minimax.api_key_configured ? "已配置，留空保持不变" : "尚未配置"}</span>
+              {form.provider === "minimax" ? "MiniMax" : "OpenAI 兼容"} 语音密钥 <span className="text-xs text-stone-400">· {(form.provider === "minimax" ? tts.minimax.api_key_configured : tts.openai_compatible.api_key_configured) ? "已配置，留空保持不变" : "尚未配置"}</span>
             </span>
             <input
               type="password"
@@ -158,8 +166,8 @@ export function TTSSettingsSection({
               className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white/30"
             />
           </label>
-          <p id="speech-key-help" className="text-xs leading-5 text-stone-400">仅用于 MiniMax 语音服务，与对话服务密钥分别配置。</p>
-          {tts.minimax.api_key_configured && (
+          <p id="speech-key-help" className="text-xs leading-5 text-stone-400">仅用于当前语音服务，与对话服务密钥分别配置。</p>
+          {(form.provider === "minimax" ? tts.minimax.api_key_configured : tts.openai_compatible.api_key_configured) && (
             <button
               onClick={() => {
                 setKeyDirty(true);
@@ -169,7 +177,7 @@ export function TTSSettingsSection({
               disabled={formLocked}
               className="text-xs text-red-200/60 hover:text-red-200 transition-colors"
             >
-              清除 MiniMax 语音密钥
+              清除当前语音密钥
             </button>
           )}
           <details className="rounded-lg border border-white/10 px-4 py-3">
@@ -188,6 +196,22 @@ export function TTSSettingsSection({
                   className="w-full bg-white/5 border border-white/10 rounded-lg text-sm outline-none focus:border-white/30"
                 />
               </label>
+              {form.provider === "openai_compatible" && (
+                <label className="block">
+                  <span className="text-sm text-stone-300">Voice 名称或 ID</span>
+                  <input
+                    list="openai-voice-options"
+                    value={form.voice}
+                    disabled={formLocked}
+                    onChange={(event) => { setForm((current) => ({ ...current, voice: event.target.value })); invalidateConnection(); }}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg text-sm outline-none focus:border-white/30"
+                  />
+                  <datalist id="openai-voice-options">
+                    {["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar"].map((voice) => <option key={voice} value={voice} />)}
+                  </datalist>
+                  <span className="mt-1 block text-xs leading-5 text-stone-400">可填写服务商预置 voice，或未来可用的自定义 voice ID。</span>
+                </label>
+              )}
               <label className="block">
                 <span className="text-sm text-stone-300">语音模型名称</span>
                 <input
@@ -205,8 +229,8 @@ export function TTSSettingsSection({
         </div>
       )}
 
-      {form.provider === "minimax" && (
-        <p className="text-xs leading-5 text-stone-400">连接测试使用已保存的语音配置，不生成音频。修改后请先保存。</p>
+      {form.provider !== "local" && (
+        <p className="text-xs leading-5 text-stone-400">连接测试使用已保存的语音配置，不生成音频。OpenAI 兼容服务通过 `/models` 验证网关与鉴权，首次播放才会验证 TTS 模型权限。修改后请先保存。</p>
       )}
       <div className="flex flex-wrap gap-3">
         <button
@@ -216,7 +240,7 @@ export function TTSSettingsSection({
         >
           {saving ? "保存中..." : "保存语音配置"}
         </button>
-        {form.provider === "minimax" && (
+        {form.provider !== "local" && (
           <button
             onClick={testConnection}
             disabled={testing || formLocked}

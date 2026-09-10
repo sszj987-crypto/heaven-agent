@@ -3,6 +3,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Callable
 
 # 确保项目根目录在 sys.path
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,21 +13,35 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from src.config.settings import Settings
 from src.config.logger import init_logger
 from src.api.routes import router
 from src.api.schemas import ErrorBody
 from src.services.container import ApplicationContainer
 from src.voice.minimax import MiniMaxError
+from src.voice.openai_compatible import OpenAICompatibleTTSError
 
 
-def create_app(container_factory=ApplicationContainer.create) -> FastAPI:
-    settings = Settings.init(ROOT / "config")
+def create_app(
+    container_factory: Callable = ApplicationContainer.create,
+    *,
+    project_root: Path | None = None,
+    static_dir: Path | None = None,
+) -> FastAPI:
+    """Create the API, optionally serving a pre-built desktop frontend.
+
+    ``project_root`` keeps all mutable configuration and user data outside a
+    frozen macOS application bundle.  ``static_dir`` is deliberately opt-in so
+    development keeps its existing separate Next.js workflow.
+    """
+    root = Path(project_root or ROOT)
+    settings = Settings.init(root / "config")
     init_logger(settings.log_level)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        container = container_factory(ROOT, settings)
+        container = container_factory(root, settings)
         application.state.container = container
         try:
             yield
@@ -95,6 +110,23 @@ def create_app(container_factory=ApplicationContainer.create) -> FastAPI:
             headers={"x-request-id": request_id},
         )
 
+    @application.exception_handler(OpenAICompatibleTTSError)
+    async def openai_compatible_tts_error(
+        request: Request, exc: OpenAICompatibleTTSError
+    ):
+        request_id = getattr(request.state, "request_id", uuid.uuid4().hex[:16])
+        body = ErrorBody(
+            code="openai_compatible_tts_error",
+            message=str(exc),
+            retryable=exc.retryable,
+            request_id=request_id,
+        )
+        return JSONResponse(
+            status_code=502,
+            content=body.model_dump(),
+            headers={"x-request-id": request_id},
+        )
+
     @application.exception_handler(Exception)
     async def unhandled_error(request: Request, exc: Exception):
         request_id = getattr(request.state, "request_id", uuid.uuid4().hex[:16])
@@ -113,9 +145,16 @@ def create_app(container_factory=ApplicationContainer.create) -> FastAPI:
 
     application.include_router(router)
 
-    @application.get("/")
-    async def root():
-        return {"name": "Heaven Agent", "version": "0.2.0", "message": "AI 人物模拟与纪念对话"}
+    if static_dir is None:
+        @application.get("/")
+        async def root_endpoint():
+            return {"name": "Heaven Agent", "version": "0.2.0", "message": "AI 人物模拟与纪念对话"}
+    else:
+        assets = Path(static_dir)
+        if not (assets / "index.html").is_file():
+            raise ValueError(f"桌面前端资源不完整: {assets}")
+        # Mount last so all API routes above retain precedence.
+        application.mount("/", StaticFiles(directory=assets, html=True), name="desktop-ui")
 
     return application
 

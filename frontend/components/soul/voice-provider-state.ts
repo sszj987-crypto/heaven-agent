@@ -38,14 +38,17 @@ export function voiceProviderPresentation(status: {
   provider: TTSProvider;
   state: string;
   has_reference: boolean;
+  ready: boolean;
+  supports_voice_cloning: boolean;
   preview_available?: boolean;
 }) {
   const showInstaller = status.provider === "local"
     && ["not_installed", "installing", "restart_required", "failed"].includes(status.state);
   return {
     showInstaller,
-    showUpload: !showInstaller && !["not_configured", "creating"].includes(status.state),
-    ready: status.state === "ready" && status.has_reference,
+    showUpload: (status.supports_voice_cloning ?? status.provider !== "openai_compatible")
+      && !showInstaller && !["not_configured", "creating"].includes(status.state),
+    ready: status.state === "ready" && (status.ready ?? status.has_reference),
     showPreview: status.provider === "minimax" && status.state === "ready"
       && status.has_reference && status.preview_available === true,
     canRetry: status.state === "failed",

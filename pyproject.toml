@@ -48,6 +48,9 @@ voice-cross-platform = [
     "tqdm>=4.64.0",
     "zhconv>=1.4.0",
 ]
+desktop = [
+    "pyinstaller>=6.11,<7",
+]
 
 [build-system]
 requires = ["setuptools>=69"]

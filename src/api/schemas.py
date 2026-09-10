@@ -88,11 +88,19 @@ class MiniMaxSettingsView(APIModel):
     api_key_configured: bool
 
 
+class OpenAICompatibleTTSSettingsView(APIModel):
+    base_url: str
+    model: str
+    voice: str
+    api_key_configured: bool
+
+
 class TTSSettingsView(APIModel):
-    provider: Literal["local", "minimax"]
+    provider: Literal["local", "minimax", "openai_compatible"]
     auto_play: bool = False
     audio_cache_size: int = Field(default=10, ge=0, le=100)
     minimax: MiniMaxSettingsView
+    openai_compatible: OpenAICompatibleTTSSettingsView
 
 
 class SettingsView(APIModel):
@@ -114,11 +122,19 @@ class MiniMaxSettingsUpdate(APIModel):
     api_key: str | None = None
 
 
+class OpenAICompatibleTTSSettingsUpdate(APIModel):
+    base_url: str | None = None
+    model: str | None = None
+    voice: str | None = None
+    api_key: str | None = None
+
+
 class TTSSettingsUpdate(APIModel):
-    provider: Literal["local", "minimax"] | None = None
+    provider: Literal["local", "minimax", "openai_compatible"] | None = None
     auto_play: bool | None = None
     audio_cache_size: int | None = Field(default=None, ge=0, le=100)
     minimax: MiniMaxSettingsUpdate | None = None
+    openai_compatible: OpenAICompatibleTTSSettingsUpdate | None = None
 
 
 class SettingsUpdate(APIModel):
@@ -280,9 +296,11 @@ class MemoryEntryView(APIModel):
 
 class VoiceStatusView(APIModel):
     has_reference: bool
+    ready: bool
     supports_instruction: bool
+    supports_voice_cloning: bool
     preview_available: bool = False
-    provider: Literal["local", "minimax"]
+    provider: Literal["local", "minimax", "openai_compatible"]
     state: Literal[
         "not_installed", "not_configured", "no_voice", "creating", "ready", "failed"
     ]

@@ -29,7 +29,7 @@ export interface Settings {
   log_level: string;
 }
 
-export type TTSProvider = "local" | "minimax";
+export type TTSProvider = "local" | "minimax" | "openai_compatible";
 
 export interface TTSSettings {
   provider: TTSProvider;
@@ -40,15 +40,27 @@ export interface TTSSettings {
     model: string;
     api_key_configured: boolean;
   };
+  openai_compatible: {
+    base_url: string;
+    model: string;
+    voice: string;
+    api_key_configured: boolean;
+  };
 }
 
 export interface TTSSettingsUpdate {
   provider: TTSProvider;
   auto_play: boolean;
   audio_cache_size: number;
-  minimax: {
+  minimax?: {
     base_url: string;
     model: string;
+    api_key?: string;
+  };
+  openai_compatible?: {
+    base_url: string;
+    model: string;
+    voice: string;
     api_key?: string;
   };
 }
@@ -101,7 +113,9 @@ export interface VoiceStatus {
   state: "not_installed" | "not_configured" | "creating" | "failed" | "ready" | "no_voice";
   message: string;
   has_reference: boolean;
+  ready: boolean;
   supports_instruction: boolean;
+  supports_voice_cloning: boolean;
   preview_available: boolean;
 }
 

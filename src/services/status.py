@@ -73,4 +73,4 @@ class SystemStatusService:
         if self._tts is not None and self._tts.provider == "minimax":
             if not self._tts.minimax.api_key:
                 return False
-        return bool(self._voice.has_reference)
+        return bool(getattr(self._voice, "is_ready", self._voice.has_reference))

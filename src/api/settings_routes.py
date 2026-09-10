@@ -9,6 +9,7 @@ from ..config.logger import get_logger
 from ..llm.manager import LLMManager
 from ..services.container import ApplicationContainer, _create_selected_voice
 from ..voice.minimax import MiniMaxClient, MiniMaxError
+from ..voice.openai_compatible import OpenAICompatibleTTSClient
 from ..voice.service import VoiceUnavailable
 from .dependencies import MAX_AUDIO_UPLOAD_BYTES, get_container
 from .schemas import (
@@ -44,6 +45,12 @@ async def get_settings(container: ApplicationContainer = Depends(get_container))
                 "base_url": settings.tts.minimax.base_url,
                 "model": settings.tts.minimax.model,
                 "api_key_configured": bool(settings.tts.minimax.api_key),
+            },
+            "openai_compatible": {
+                "base_url": settings.tts.openai_compatible.base_url,
+                "model": settings.tts.openai_compatible.model,
+                "voice": settings.tts.openai_compatible.voice,
+                "api_key_configured": bool(settings.tts.openai_compatible.api_key),
             },
         },
         "log_level": settings.log_level,
@@ -83,6 +90,11 @@ async def update_settings(
                     for key, value in (tts_update.get("minimax") or {}).items()
                     if value is not None
                 }
+                openai_update = {
+                    key: value
+                    for key, value in (tts_update.get("openai_compatible") or {}).items()
+                    if value is not None
+                }
                 provider_changed = (
                     tts_update.get("provider") is not None
                     and tts_update["provider"] != settings.tts.provider
@@ -91,12 +103,18 @@ async def update_settings(
                     value != getattr(settings.tts.minimax, key)
                     for key, value in minimax_update.items()
                 )
-                if provider_changed or minimax_changed:
+                openai_changed = any(
+                    value != getattr(settings.tts.openai_compatible, key)
+                    for key, value in openai_update.items()
+                )
+                if provider_changed or minimax_changed or openai_changed:
                     candidate_tts = deepcopy(settings.tts)
                     if tts_update.get("provider") is not None:
                         candidate_tts.provider = tts_update["provider"]
                     for key, value in minimax_update.items():
                         setattr(candidate_tts.minimax, key, value)
+                    for key, value in openai_update.items():
+                        setattr(candidate_tts.openai_compatible, key, value)
                     replacement = _create_selected_voice(
                         SimpleNamespace(tts=candidate_tts),
                         container.layout.voice_dir,
@@ -104,12 +122,15 @@ async def update_settings(
                         settings.soul_id,
                     )
                     try:
-                        settings.update_tts(
-                            provider=tts_update.get("provider"),
-                            minimax=minimax_update or None,
-                            auto_play=tts_update.get("auto_play"),
-                            audio_cache_size=tts_update.get("audio_cache_size"),
-                        )
+                        update_kwargs = {
+                            "provider": tts_update.get("provider"),
+                            "minimax": minimax_update or None,
+                            "auto_play": tts_update.get("auto_play"),
+                            "audio_cache_size": tts_update.get("audio_cache_size"),
+                        }
+                        if openai_update:
+                            update_kwargs["openai_compatible"] = openai_update
+                        settings.update_tts(**update_kwargs)
                     except Exception:
                         try:
                             await replacement.aclose()
@@ -135,6 +156,11 @@ async def upload_voice_sample(
     audio: UploadFile = File(...),
     container: ApplicationContainer = Depends(get_container),
 ):
+    if container.settings.tts.provider == "openai_compatible":
+        raise HTTPException(
+            status_code=400,
+            detail="当前 OpenAI 兼容语音服务不支持在应用内创建音色",
+        )
     audio_bytes = await audio.read(MAX_AUDIO_UPLOAD_BYTES + 1)
     if len(audio_bytes) > MAX_AUDIO_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="音频不能超过 25 MB")
@@ -161,23 +187,38 @@ async def upload_voice_sample(
 async def get_voice_status(container: ApplicationContainer = Depends(get_container)):
     settings = container.settings
     voice = container.voice
-    has_reference = bool(voice.has_reference)
     provider = settings.tts.provider
+    has_reference = bool(voice.has_reference)
+    ready = bool(getattr(voice, "is_ready", has_reference))
+    capabilities = getattr(voice, "capabilities", None)
+    supports_instruction = bool(
+        getattr(capabilities, "supports_instruction", getattr(voice, "supports_instruction", False))
+    )
+    supports_voice_cloning = bool(
+        getattr(capabilities, "supports_voice_cloning", provider != "openai_compatible")
+    )
     if provider == "local" and not container.voice_installed:
         state, message = "not_installed", "语音组件未安装"
     elif provider == "minimax" and not settings.tts.minimax.api_key:
         state, message = "not_configured", "请先在设置中配置 MiniMax API Key"
+    elif provider == "openai_compatible" and not ready:
+        state, message = "not_configured", "请先在设置中配置 OpenAI 兼容语音服务"
     elif bool(getattr(voice, "creating", False)):
         state, message = "creating", "正在创建云端音色"
     elif not has_reference and getattr(voice, "last_error", ""):
         state, message = "failed", voice.last_error
-    elif has_reference:
-        state, message = "ready", "音色已就绪"
+    elif ready:
+        state, message = (
+            "ready",
+            "语音服务已就绪" if provider == "openai_compatible" else "音色已就绪",
+        )
     else:
         state, message = "no_voice", "尚未创建可用音色"
     return {
         "has_reference": has_reference,
-        "supports_instruction": bool(getattr(voice, "supports_instruction", False)),
+        "ready": ready,
+        "supports_instruction": supports_instruction,
+        "supports_voice_cloning": supports_voice_cloning,
         "preview_available": provider == "minimax" and state == "ready"
         and bool(getattr(voice, "activation_preview", None)),
         "provider": provider,
@@ -196,7 +237,13 @@ async def test_tts_connection(container: ApplicationContainer = Depends(get_cont
     settings = container.settings
     if settings.tts.provider == "local":
         return {"connected": not hasattr(container.voice, "unavailable_reason")}
-    client = MiniMaxClient(settings.tts.minimax.base_url, settings.tts.minimax.api_key)
+    if settings.tts.provider == "minimax":
+        client = MiniMaxClient(settings.tts.minimax.base_url, settings.tts.minimax.api_key)
+    else:
+        client = OpenAICompatibleTTSClient(
+            settings.tts.openai_compatible.base_url,
+            settings.tts.openai_compatible.api_key,
+        )
     try:
         return {"connected": await client.test_connection()}
     finally:

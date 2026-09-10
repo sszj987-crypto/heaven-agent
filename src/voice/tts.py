@@ -11,6 +11,7 @@ import numpy as np
 
 from ..agent.context import TTSConfig
 from ..config.logger import get_logger
+from .service import VoiceCapabilities
 
 log = get_logger("tts")
 
@@ -100,6 +101,18 @@ class TTSService:
     @property
     def has_reference(self) -> bool:
         return self._ref_audio_path.exists()
+
+    @property
+    def is_ready(self) -> bool:
+        return self.has_reference
+
+    @property
+    def capabilities(self) -> VoiceCapabilities:
+        return VoiceCapabilities(
+            requires_reference=True,
+            supports_voice_cloning=True,
+            supports_instruction=True,
+        )
 
     @property
     def supports_instruction(self) -> bool:

@@ -20,9 +20,22 @@ class MiniMaxConfig:
 
 
 @dataclass
+class OpenAICompatibleTTSConfig:
+    """Configuration shared by OpenAI and OpenAI-format TTS gateways."""
+
+    base_url: str = "https://api.openai.com/v1"
+    api_key: str = ""
+    model: str = "gpt-4o-mini-tts"
+    voice: str = "alloy"
+
+
+@dataclass
 class VoiceProviderConfig:
-    provider: Literal["local", "minimax"] = "local"
+    provider: Literal["local", "minimax", "openai_compatible"] = "local"
     minimax: MiniMaxConfig = field(default_factory=MiniMaxConfig)
+    openai_compatible: OpenAICompatibleTTSConfig = field(
+        default_factory=OpenAICompatibleTTSConfig
+    )
     auto_play: bool = False
     audio_cache_size: int = 10
 
@@ -65,10 +78,11 @@ class ConfigLoader:
         if tts_path.exists():
             tts_data = json.loads(tts_path.read_text())
             provider = tts_data.get("provider", config.tts.provider)
-            if provider not in ("local", "minimax"):
+            if provider not in ("local", "minimax", "openai_compatible"):
                 raise ValueError("不支持的语音服务")
 
             minimax_data = tts_data.get("minimax", {})
+            openai_data = tts_data.get("openai_compatible", {})
             config.tts = VoiceProviderConfig(
                 provider=provider,
                 auto_play=tts_data.get("auto_play", False) is True,
@@ -77,6 +91,20 @@ class ConfigLoader:
                     base_url=minimax_data.get("base_url", config.tts.minimax.base_url),
                     api_key=minimax_data.get("api_key", config.tts.minimax.api_key),
                     model=minimax_data.get("model", config.tts.minimax.model),
+                ),
+                openai_compatible=OpenAICompatibleTTSConfig(
+                    base_url=openai_data.get(
+                        "base_url", config.tts.openai_compatible.base_url
+                    ),
+                    api_key=openai_data.get(
+                        "api_key", config.tts.openai_compatible.api_key
+                    ),
+                    model=openai_data.get(
+                        "model", config.tts.openai_compatible.model
+                    ),
+                    voice=openai_data.get(
+                        "voice", config.tts.openai_compatible.voice
+                    ),
                 ),
             )
 

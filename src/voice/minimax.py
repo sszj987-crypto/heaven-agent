@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import logging
 import re
-import struct
 import uuid
-import wave
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Literal
@@ -19,7 +16,8 @@ import httpx
 from ..agent.context import TTSConfig
 from ..config.loader import MiniMaxConfig
 from .cloud_store import CloudVoiceProfile, CloudVoiceStore
-from .service import VoiceUnavailable
+from .audio import validate_wav_structure
+from .service import VoiceCapabilities, VoiceUnavailable
 
 
 ACTIVATION_TEXT = "你好，很高兴再次与你说话。"
@@ -30,25 +28,8 @@ log = logging.getLogger(__name__)
 def validate_wav(audio: bytes) -> None:
     """Reject incomplete or structurally invalid provider WAV output."""
     try:
-        if (
-            len(audio) < 44
-            or not audio.startswith(b"RIFF")
-            or audio[8:12] != b"WAVE"
-            or struct.unpack("<I", audio[4:8])[0] != len(audio) - 8
-        ):
-            raise ValueError("invalid RIFF header")
-        with wave.open(io.BytesIO(audio), "rb") as wav_file:
-            if (
-                wav_file.getnchannels() < 1
-                or wav_file.getsampwidth() < 1
-                or wav_file.getframerate() < 1
-                or wav_file.getnframes() < 1
-            ):
-                raise ValueError("invalid WAV parameters")
-            expected_frame_bytes = wav_file.getnframes() * wav_file.getnchannels() * wav_file.getsampwidth()
-            if len(wav_file.readframes(wav_file.getnframes())) != expected_frame_bytes:
-                raise ValueError("truncated WAV data")
-    except (EOFError, OSError, ValueError, wave.Error, struct.error) as exc:
+        validate_wav_structure(audio)
+    except ValueError as exc:
         raise MiniMaxError("MiniMax 返回的语音无效", retryable=True) from exc
 
 
@@ -243,6 +224,18 @@ class MiniMaxTTSService:
     @property
     def has_reference(self) -> bool:
         return bool(self._store.load().voice_id)
+
+    @property
+    def is_ready(self) -> bool:
+        return bool(self._config.api_key and self.has_reference)
+
+    @property
+    def capabilities(self) -> VoiceCapabilities:
+        return VoiceCapabilities(
+            requires_reference=True,
+            supports_voice_cloning=True,
+            supports_instruction=True,
+        )
 
     @property
     def supports_instruction(self) -> bool:

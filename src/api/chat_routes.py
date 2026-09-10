@@ -10,6 +10,7 @@ from ..services.container import ApplicationContainer
 from ..voice.asr import create_asr_service
 from ..voice.service import VoiceUnavailable
 from ..voice.minimax import MiniMaxError
+from ..voice.openai_compatible import OpenAICompatibleTTSError
 from .dependencies import MAX_AUDIO_UPLOAD_BYTES, get_container
 from .schemas import (
     AudioRequest,
@@ -212,6 +213,8 @@ async def _chat_audio_response(body: AudioRequest, container: ApplicationContain
         and not container.settings.tts.minimax.api_key
     ):
         raise HTTPException(status_code=400, detail="请先在设置中配置 MiniMax API Key")
+    if not bool(getattr(tts, "is_ready", getattr(tts, "has_reference", False))):
+        raise HTTPException(status_code=400, detail="请先配置可用的语音服务")
     if hasattr(tts, "unavailable_reason"):
         raise HTTPException(status_code=503, detail=tts.unavailable_reason)
     tts_config = TTSConfig(instruct_text=body.instruct_text)
@@ -228,6 +231,8 @@ async def _generate_audio(tts, text: str, config: TTSConfig) -> bytes:
     except VoiceUnavailable as exc:
         raise HTTPException(status_code=503, detail="语音组件当前不可用") from exc
     except MiniMaxError:
+        raise
+    except OpenAICompatibleTTSError:
         raise
     except ModuleNotFoundError as exc:
         log.exception("TTS 缺少运行依赖, module=%s", exc.name)
@@ -268,7 +273,7 @@ def _voice_available(container: ApplicationContainer) -> bool:
         and not container.settings.tts.minimax.api_key
     ):
         return False
-    return bool(container.voice.has_reference)
+    return bool(getattr(container.voice, "is_ready", container.voice.has_reference))
 
 
 def _llm_http_error(exc: Exception) -> HTTPException:

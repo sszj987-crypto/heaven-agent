@@ -36,6 +36,7 @@ export default function SettingsPage() {
             auto_play: false,
             audio_cache_size: 10,
             minimax: { base_url: "https://api.minimaxi.com", model: "speech-2.8-hd", api_key_configured: false },
+            openai_compatible: { base_url: "https://api.openai.com/v1", model: "gpt-4o-mini-tts", voice: "alloy", api_key_configured: false },
           },
           log_level: "error",
         });

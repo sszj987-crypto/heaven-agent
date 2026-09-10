@@ -125,6 +125,7 @@ class Settings:
         self,
         provider: str | None = None,
         minimax: dict[str, object] | None = None,
+        openai_compatible: dict[str, object] | None = None,
         auto_play: bool | None = None,
         audio_cache_size: int | None = None,
     ) -> None:
@@ -138,13 +139,17 @@ class Settings:
                 candidate.auto_play = auto_play
             if audio_cache_size is not None:
                 candidate.audio_cache_size = max(0, min(100, audio_cache_size))
-            if candidate.provider not in ("local", "minimax"):
+            if candidate.provider not in ("local", "minimax", "openai_compatible"):
                 raise ValueError("不支持的语音服务")
 
             if minimax is not None:
                 for key in ("base_url", "api_key", "model"):
                     if key in minimax:
                         setattr(candidate.minimax, key, minimax[key])
+            if openai_compatible is not None:
+                for key in ("base_url", "api_key", "model", "voice"):
+                    if key in openai_compatible:
+                        setattr(candidate.openai_compatible, key, openai_compatible[key])
 
             self._save_json("tts.json", candidate)
             self._config.tts = candidate

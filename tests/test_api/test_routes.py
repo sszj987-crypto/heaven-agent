@@ -57,8 +57,8 @@ class FakeSettings:
     def update_log_level(self, level):
         self.log_level = level
 
-    def update_tts(self, provider=None, minimax=None, auto_play=None, audio_cache_size=None):
-        self.tts_updated = {"provider": provider, "minimax": minimax}
+    def update_tts(self, provider=None, minimax=None, openai_compatible=None, auto_play=None, audio_cache_size=None):
+        self.tts_updated = {"provider": provider, "minimax": minimax, "openai_compatible": openai_compatible}
         if auto_play is not None:
             self.tts.auto_play = auto_play
         if audio_cache_size is not None:
@@ -68,6 +68,9 @@ class FakeSettings:
         for key, value in (minimax or {}).items():
             if value is not None:
                 setattr(self.tts.minimax, key, value)
+        for key, value in (openai_compatible or {}).items():
+            if value is not None:
+                setattr(self.tts.openai_compatible, key, value)
 
 
 class FakeAgent:
@@ -476,7 +479,59 @@ def test_settings_view_masks_minimax_key():
             "model": "speech-2.8-hd",
             "api_key_configured": True,
         },
+        "openai_compatible": {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini-tts",
+            "voice": "alloy",
+            "api_key_configured": False,
+        },
     }
+
+
+def test_openai_compatible_tts_update_hot_replaces_without_exposing_key():
+    client, container = make_client()
+    with client:
+        response = client.put(
+            "/settings",
+            json={"tts": {
+                "provider": "openai_compatible",
+                "openai_compatible": {
+                    "base_url": "https://newapi.example/v1",
+                    "api_key": "new-key",
+                    "model": "custom-tts",
+                    "voice": "voice_123",
+                },
+            }},
+        )
+
+    assert response.status_code == 200
+    assert container.settings.tts.provider == "openai_compatible"
+    assert container.settings.tts.openai_compatible.api_key == "new-key"
+    assert container.settings.tts.openai_compatible.voice == "voice_123"
+    assert container.voice_replaced is True
+
+
+def test_openai_compatible_voice_is_ready_without_reference_and_rejects_upload():
+    client, container = make_client()
+    container.settings.tts.provider = "openai_compatible"
+    container.settings.tts.openai_compatible.api_key = "configured"
+    container.voice = SimpleNamespace(
+        has_reference=False,
+        is_ready=True,
+        supports_instruction=True,
+    )
+    with client:
+        status = client.get("/settings/voice/status")
+        upload = client.post(
+            "/settings/voice/upload",
+            files={"audio": ("sample.wav", b"RIFFsample", "audio/wav")},
+        )
+
+    assert status.status_code == 200
+    assert status.json()["ready"] is True
+    assert status.json()["has_reference"] is False
+    assert status.json()["supports_voice_cloning"] is False
+    assert upload.status_code == 400
 
 
 def test_tts_update_hot_replaces_voice_without_exposing_key():
@@ -723,7 +778,9 @@ def test_voice_status_exposes_instruction_capability_without_overpromising():
     assert response.status_code == 200
     assert response.json() == {
         "has_reference": False,
+        "ready": False,
         "supports_instruction": True,
+        "supports_voice_cloning": True,
         "preview_available": False,
         "provider": "minimax",
         "state": "not_configured",

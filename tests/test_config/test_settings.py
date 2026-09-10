@@ -127,6 +127,23 @@ class TestSettings:
         assert reloaded.tts.auto_play is False
         assert reloaded.tts.minimax.api_key == "existing"
 
+    def test_update_openai_compatible_tts_keeps_omitted_secret(self):
+        settings = Settings.init(self._config_dir)
+        settings.update_tts(
+            provider="openai_compatible",
+            openai_compatible={
+                "api_key": "existing",
+                "base_url": "https://newapi.example/v1",
+                "voice": "voice_123",
+            },
+        )
+        settings.update_tts(openai_compatible={"model": "custom-tts"})
+
+        saved = json.loads((self._config_dir / "tts.json").read_text())
+        assert settings.tts.provider == "openai_compatible"
+        assert settings.tts.openai_compatible.api_key == "existing"
+        assert saved["openai_compatible"]["voice"] == "voice_123"
+
     def test_update_circumstances_writes_back(self):
         Settings.init(self._config_dir)
         Settings.get().update_circumstances("新场景")

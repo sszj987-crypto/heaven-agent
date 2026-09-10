@@ -31,7 +31,7 @@ export default function VoicePanel() {
       const result = await loadVoicePanelStatus(fetchVoiceStatus, fetchVoiceInstallation);
       if (current !== lifecycle.current) return;
       setStatus(result.status); setInstallation(result.installation); setLoadError("");
-      localStorage.setItem("voice_ready", String(result.status.has_reference));
+      localStorage.setItem("voice_ready", String(result.status.ready));
     } catch (error) {
       if (current === lifecycle.current) setLoadError(error instanceof Error ? error.message : "无法读取声音状态");
     }
@@ -68,7 +68,7 @@ export default function VoicePanel() {
       fetchStatus: fetchVoiceStatus,
       onStatus: next => {
         setStatus(next); setLoadError("");
-        localStorage.setItem("voice_ready", String(next.has_reference));
+        localStorage.setItem("voice_ready", String(next.ready));
         if (next.provider === "local") void load();
       },
       onError: error => setLoadError(error.message),
@@ -93,7 +93,7 @@ export default function VoicePanel() {
       if (current !== lifecycle.current) return;
       localStorage.setItem("voice_ready", "true");
       setStatus(previous => previous ? {
-        ...previous, has_reference: true, state: "ready", message: "音色已就绪",
+        ...previous, has_reference: true, ready: true, state: "ready", message: "音色已就绪",
         preview_available: previous.provider === "minimax" && result.preview_available,
       } : previous);
       setMessage("音色创建成功，后端已保存");
@@ -187,6 +187,11 @@ export default function VoicePanel() {
             {processing && <p className="text-xs text-white/30">正在处理录音...</p>}
             {uploading && <p className="text-xs text-white/30">正在上传并创建音色...</p>}
           </>
+        )}
+        {status?.provider === "openai_compatible" && (
+          <p className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs leading-5 text-white/50">
+            当前 OpenAI 兼容语音服务使用设置页配置的 voice 名称或 ID 合成，不支持在应用内上传录音、创建自定义音色或生成音色试听。
+          </p>
         )}
         {message && <p role="status" className={`text-xs ${message.includes("成功") ? "text-green-400" : "text-red-400"}`}>{message}</p>}
         {!view?.showUpload && <p className="text-xs text-white/30">文字对话不受影响。</p>}

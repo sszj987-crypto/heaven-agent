@@ -71,6 +71,9 @@ class TestConfigLoader:
             assert config.tts.minimax.base_url == "https://api.minimaxi.com"
             assert config.tts.minimax.model == "speech-2.8-hd"
             assert config.tts.minimax.api_key == ""
+            assert config.tts.openai_compatible.base_url == "https://api.openai.com/v1"
+            assert config.tts.openai_compatible.model == "gpt-4o-mini-tts"
+            assert config.tts.openai_compatible.voice == "alloy"
 
     def test_load_tts_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -85,3 +88,23 @@ class TestConfigLoader:
             assert config.tts.provider == "minimax"
             assert config.tts.minimax.api_key == "tts-secret"
             assert config.tts.minimax.model == "speech-2.8-turbo"
+
+    def test_load_openai_compatible_tts_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp)
+            (config_dir / "tts.json").write_text(json.dumps({
+                "provider": "openai_compatible",
+                "openai_compatible": {
+                    "base_url": "https://newapi.example/v1",
+                    "api_key": "tts-secret",
+                    "model": "custom-tts",
+                    "voice": "voice_123",
+                },
+            }))
+
+            config = ConfigLoader(config_dir).load()
+
+            assert config.tts.provider == "openai_compatible"
+            assert config.tts.openai_compatible.base_url == "https://newapi.example/v1"
+            assert config.tts.openai_compatible.api_key == "tts-secret"
+            assert config.tts.openai_compatible.voice == "voice_123"

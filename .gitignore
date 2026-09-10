@@ -18,4 +18,6 @@ config/souls/test copy
 config/conversation.json
 config/voice
 deps
+build
+dist
 docs

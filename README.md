@@ -24,6 +24,22 @@ Windows：
 scripts\start.bat
 ```
 
+## macOS 应用包（双击打开）
+
+可将项目构建为 Finder 中可双击启动的 `Heaven Agent.app`。应用会在首次打开时把可编辑的配置和所有用户数据写入 `~/Library/Application Support/Heaven Agent/`，升级应用不会覆盖已存在的档案、对话或设置。
+
+在 macOS 的项目根目录执行：
+
+```bash
+./.venv/bin/python -m pip install -e '.[desktop]'
+./.venv/bin/python scripts/build_macos_app.py
+open 'dist/Heaven Agent.app'
+```
+
+构建结果为 `dist/Heaven Agent.app`。它内置 Python、后端和已静态化的前端，最终用户不需要运行 `start.sh`，也不需要安装 Node.js。首次打开后会自动显示应用界面；关闭浏览器标签不会停止后台应用，需在 Dock 中退出 Heaven Agent。
+
+当前构建产物仅适用于与构建机器相同的 macOS 架构（Apple Silicon 或 Intel）。发布给两种架构前，应分别构建，或后续制作 universal 包。
+
 启动脚本会检查 Python/Node，创建或修复 `.venv`，从 `pyproject.toml` 安装核心依赖并执行 `npm ci`。打开 <http://localhost:3326>，按四步引导完成“人物信息 → 导入确认 → 声音 → 对话”。首次建档会使用脱敏 demo 模板，不要求仓库中存在个人资料。
 
 如果只想准备环境：
@@ -64,9 +80,9 @@ tail -f log/backend.log
 - **`No module named 'einops'` 或缺少语音依赖**：运行 `python3 scripts/bootstrap.py --voice --skip-node` 修复语音环境，然后重启服务。MLX 语音包使用 `--no-deps` 安装，其推理所需依赖由本项目安装清单显式补齐。
 - **模型加载或合成报错**：查看堆栈最底部的原因；首次加载模型较慢，“测试连接”只检查服务可用状态，实际点击播放才能验证完整合成链路。
 
-## 本地与 MiniMax 云端音色
+## 本地、MiniMax 与 OpenAI 兼容云端语音
 
-设置页的“语音合成”可选择 `local` 或 `minimax`。`local` 使用本机按需安装的语音组件和模型；`minimax` 使用 MiniMax 云端音色，不需要安装本地语音包或下载本地模型。选择一种服务只影响语音：对话文字会照常返回。
+设置页的“语音合成”可选择 `local`、`minimax` 或 `openai_compatible`。`local` 使用本机按需安装的语音组件和模型；`minimax` 使用 MiniMax 云端音色；`openai_compatible` 使用 OpenAI `/v1/audio/speech` 格式的云端接口，兼容 OpenAI 及 NewAPI 类网关。选择一种服务只影响语音：对话文字会照常返回。
 
 ### 配置 MiniMax
 
@@ -84,7 +100,7 @@ MiniMax 的 Key 独立于 LLM Key，不能互用。在 MiniMax 开放平台的�
 
 演示重置会把云端音色元数据、参考录音和试听文件一起归档到可恢复备份，远端音色会保留。归档中的待清理任务不会再自动重试；重置本身不会删除远端音色。
 
-云端配置写入被 Git 忽略的 `config/tts.json`；其中包含提供商、MiniMax 服务地址、模型和 API Key。每个 Soul 的云端音色元数据位于 `data/souls/{soul_id}/voice/cloud.json`，同一目录还会保存云端参考录音与激活试听。不要手工共享这些运行数据。
+云端配置写入被 Git 忽略的 `config/tts.json`；其中包含提供商及其语音服务地址、模型、voice 和 API Key。MiniMax 的每个 Soul 云端音色元数据位于 `data/souls/{soul_id}/voice/cloud.json`，同一目录还会保存云端参考录音与激活试听。不要手工共享这些运行数据。
 
 ### MiniMax 故障排查
 
@@ -92,6 +108,12 @@ MiniMax 的 Key 独立于 LLM Key，不能互用。在 MiniMax 开放平台的�
 - **提示未配置或没有可用音色**：先保存 MiniMax Key，再上传合规样本并等待状态显示“音色已就绪”。MiniMax 模式不应安装本地语音组件作为前置条件。
 - **401/403、额度或频率限制、超时**：检查 Key 与认证状态，或稍后重试/检查 MiniMax 账户额度。错误会直接显示；系统不会自动切回本地 TTS。
 - **替换创建失败**：旧音色会保持可用，直到新音色完成激活试听。可在修正样本、凭据或额度问题后重试。
+
+### 配置 OpenAI 兼容 TTS
+
+在设置页选择“OpenAI 兼容”，填写服务商的 Base URL、API Key、模型与 `voice`。默认值对应 OpenAI：`https://api.openai.com/v1`、`gpt-4o-mini-tts` 与 `alloy`。系统以 `POST /v1/audio/speech` 发送 `model`、`input`、`voice`、`instructions`（旧版 `tts-1` / `tts-1-hd` 自动省略）和固定的 `response_format: "wav"`，因此可以继续使用现有的浏览器播放链路。
+
+Voice 输入既可选择常用 OpenAI 预置音色，也可直接填写服务商的预置名称或 voice ID。首版不会上传参考录音、创建自定义音色或生成音色试听；这些能力将通过 Provider capability 扩展，而不会改变标准合成接口。连接测试请求 `/v1/models`，不会产生合成费用，但首次播放才会验证具体 TTS 模型和权限。
 
 ## 配置
 
@@ -174,9 +196,9 @@ curl http://localhost:8326/system/status
 | POST | `/memory/candidates/{id}/approve` | 编辑后确认写入 |
 | POST | `/memory/candidates/{id}/reject` | 忽略候选 |
 | GET/PUT | `/settings` | 读取或热更新配置 |
-| POST | `/settings/test-tts` | 校验当前语音服务连接；MiniMax 不合成音频 |
+| POST | `/settings/test-tts` | 校验当前语音服务连接；云端服务不合成音频 |
 | GET | `/settings/voice/status` | 当前提供商及其音色状态 |
-| POST | `/settings/voice/upload` | 上传本地参考音频或创建 MiniMax 云端音色 |
+| POST | `/settings/voice/upload` | 上传本地参考音频或创建 MiniMax 云端音色（OpenAI 兼容模式不支持） |
 | GET | `/settings/voice/preview` | 读取已激活 MiniMax 音色的本地试听 WAV |
 
 错误统一为 `{code, message, retryable, request_id}`；日志默认记录请求 ID、阶段耗时和任务状态，不应记录完整私密内容。

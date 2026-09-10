@@ -6,21 +6,31 @@ export interface TTSSettingsForm {
   audio_cache_size: number;
   base_url: string;
   model: string;
+  voice: string;
   api_key: string;
 }
 
 export function buildTTSUpdate(form: TTSSettingsForm, keyDirty: boolean): TTSSettingsUpdate {
-  const minimax: TTSSettingsUpdate["minimax"] = {
+  const base = {
+    provider: form.provider,
+    auto_play: form.auto_play,
+    audio_cache_size: form.audio_cache_size,
+  };
+  if (form.provider === "openai_compatible") {
+    const openai_compatible: NonNullable<TTSSettingsUpdate["openai_compatible"]> = {
+      base_url: form.base_url,
+      model: form.model,
+      voice: form.voice,
+    };
+    if (keyDirty) openai_compatible.api_key = form.api_key;
+    return { ...base, openai_compatible };
+  }
+  const minimax: NonNullable<TTSSettingsUpdate["minimax"]> = {
     base_url: form.base_url,
     model: form.model,
   };
   if (keyDirty) minimax.api_key = form.api_key;
-  return {
-    provider: form.provider,
-    auto_play: form.auto_play,
-    audio_cache_size: form.audio_cache_size,
-    minimax,
-  };
+  return { ...base, minimax };
 }
 
 export function resetTTSFormAfterSave(form: TTSSettingsForm): {

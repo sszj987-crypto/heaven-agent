@@ -12,6 +12,16 @@ test("MiniMax never shows the local installer, even without local packages", () 
   }
 });
 
+test("OpenAI-compatible speech is ready without a reference sample and never exposes cloning", () => {
+  const view = voiceProviderPresentation({
+    provider: "openai_compatible", state: "ready", has_reference: false,
+    ready: true, supports_voice_cloning: false,
+  });
+  assert.equal(view.ready, true);
+  assert.equal(view.showUpload, false);
+  assert.equal(view.showPreview, false);
+});
+
 
 test("persisted cloud preview visibility is restored from provider status", () => {
   const cloud = voiceProviderPresentation({

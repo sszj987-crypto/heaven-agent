@@ -64,7 +64,9 @@ async def get_system_diagnostics(
 ):
     return container.data_management.diagnostics(
         voice_installed=container.voice_installed,
-        voice_ready=bool(container.voice.has_reference),
+        voice_ready=bool(
+            getattr(container.voice, "is_ready", container.voice.has_reference)
+        ),
         memory_ready=container.memory_store is not None,
         ffmpeg_available=bool(shutil.which("ffmpeg")),
     )

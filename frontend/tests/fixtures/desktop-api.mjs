@@ -4,7 +4,11 @@ import { createServer } from "node:http";
 
 const settings = {
   llm: { base_url: "https://dialogue.example.test", model: "dialogue-demo", temperature: 0.7, api_key_configured: true },
-  tts: { provider: "minimax", minimax: { base_url: "https://speech.example.test", model: "speech-demo", api_key_configured: true } },
+  tts: {
+    provider: "minimax",
+    minimax: { base_url: "https://speech.example.test", model: "speech-demo", api_key_configured: true },
+    openai_compatible: { base_url: "https://api.openai.com/v1", model: "gpt-4o-mini-tts", voice: "alloy", api_key_configured: false },
+  },
   log_level: "error",
 };
 const calls = [];
@@ -36,15 +40,21 @@ const server = createServer(async (request, response) => {
   if (route === "GET /settings") return json(settings);
   if (route === "GET /__checks") return json({ settings, calls });
   if (route === "PUT /settings") {
-    calls.push({ route, sections: Object.keys(body), llmKeySent: Object.hasOwn(body.llm ?? {}, "api_key"), ttsKeySent: Object.hasOwn(body.tts?.minimax ?? {}, "api_key") });
+    calls.push({ route, sections: Object.keys(body), llmKeySent: Object.hasOwn(body.llm ?? {}, "api_key"), ttsKeySent: Object.hasOwn(body.tts?.minimax ?? body.tts?.openai_compatible ?? {}, "api_key") });
     if (body.llm) {
       const { api_key, ...fields } = body.llm;
       Object.assign(settings.llm, fields, api_key !== undefined ? { api_key_configured: Boolean(api_key) } : {});
     }
     if (body.tts) {
       settings.tts.provider = body.tts.provider;
-      const { api_key, ...fields } = body.tts.minimax;
-      Object.assign(settings.tts.minimax, fields, api_key !== undefined ? { api_key_configured: Boolean(api_key) } : {});
+      if (body.tts.minimax) {
+        const { api_key, ...fields } = body.tts.minimax;
+        Object.assign(settings.tts.minimax, fields, api_key !== undefined ? { api_key_configured: Boolean(api_key) } : {});
+      }
+      if (body.tts.openai_compatible) {
+        const { api_key, ...fields } = body.tts.openai_compatible;
+        Object.assign(settings.tts.openai_compatible, fields, api_key !== undefined ? { api_key_configured: Boolean(api_key) } : {});
+      }
     }
     if (body.log_level) settings.log_level = body.log_level;
     return json({ status: "ok" });

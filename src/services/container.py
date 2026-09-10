@@ -18,6 +18,7 @@ from ..soul.distiller import SoulDistiller
 from ..soul.loader import SoulLoader
 from ..voice.service import DisabledVoiceService
 from ..voice.minimax import MiniMaxTTSService
+from ..voice.openai_compatible import OpenAICompatibleTTSService
 from .candidates import CandidateService
 from .data_management import DataManagementService
 from .feedback import FeedbackStore
@@ -277,6 +278,30 @@ def _create_local_voice(data_dir: Path, root: Path) -> tuple[Any, bool]:
 def _create_selected_voice(
     settings: Settings, data_dir: Path, root: Path, soul_id: str
 ) -> Any:
-    if settings.tts.provider == "minimax":
-        return MiniMaxTTSService(data_dir, soul_id, settings.tts.minimax)
+    return TTS_PROVIDER_FACTORIES[settings.tts.provider](settings, data_dir, root, soul_id)
+
+
+def _create_local_provider(
+    _settings: Settings, data_dir: Path, root: Path, _soul_id: str
+) -> Any:
     return _create_local_voice(data_dir, root)[0]
+
+
+def _create_minimax_provider(
+    settings: Settings, data_dir: Path, _root: Path, soul_id: str
+) -> MiniMaxTTSService:
+    return MiniMaxTTSService(data_dir, soul_id, settings.tts.minimax)
+
+
+def _create_openai_compatible_provider(
+    settings: Settings, _data_dir: Path, _root: Path, _soul_id: str
+) -> OpenAICompatibleTTSService:
+    return OpenAICompatibleTTSService(settings.tts.openai_compatible)
+
+
+# Static registry: future cloud providers only need a factory matching this signature.
+TTS_PROVIDER_FACTORIES = {
+    "local": _create_local_provider,
+    "minimax": _create_minimax_provider,
+    "openai_compatible": _create_openai_compatible_provider,
+}
