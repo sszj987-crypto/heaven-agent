@@ -11,6 +11,7 @@ from ..voice.asr import create_asr_service
 from ..voice.service import VoiceUnavailable
 from ..voice.minimax import MiniMaxError
 from ..voice.openai_compatible import OpenAICompatibleTTSError
+from ..voice.text import text_for_speech
 from .dependencies import MAX_AUDIO_UPLOAD_BYTES, get_container
 from .schemas import (
     AudioRequest,
@@ -218,7 +219,10 @@ async def _chat_audio_response(body: AudioRequest, container: ApplicationContain
     if hasattr(tts, "unavailable_reason"):
         raise HTTPException(status_code=503, detail=tts.unavailable_reason)
     tts_config = TTSConfig(instruct_text=body.instruct_text)
-    audio = await _generate_audio(tts, body.text, tts_config)
+    speech_text = text_for_speech(body.text)
+    if not speech_text.strip():
+        raise HTTPException(status_code=422, detail="待生成语音的文本不包含可朗读内容")
+    audio = await _generate_audio(tts, speech_text, tts_config)
     return Response(content=audio, media_type="audio/wav")
 
 

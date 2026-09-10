@@ -419,6 +419,34 @@ def test_chat_audio_rejects_empty_voice_output():
     assert response.json()["message"] == "语音准备失败，请重试"
 
 
+def test_chat_audio_omits_bracketed_emoji_from_speech_text():
+    client, container = make_client()
+
+    class RecordingVoice(FakeCloudVoice):
+        async def speak(self, text, config):
+            self.speech_text = text
+            async for chunk in super().speak(text, config):
+                yield chunk
+
+    voice = RecordingVoice(has_reference=True)
+    container.voice = voice
+    with client:
+        response = client.post("/chat/audio", json={"text": "你好[旺柴]，今天开心[doge]！"})
+
+    assert response.status_code == 200
+    assert voice.speech_text == "你好，今天开心！"
+
+
+def test_chat_audio_rejects_text_that_only_contains_bracketed_emoji():
+    client, container = make_client()
+    container.voice = FakeCloudVoice(has_reference=True)
+    with client:
+        response = client.post("/chat/audio", json={"text": "[旺柴][doge]"})
+
+    assert response.status_code == 422
+    assert response.json()["message"] == "待生成语音的文本不包含可朗读内容"
+
+
 def test_chat_audio_rejects_tts_exception_without_private_detail():
     client, container = make_client()
     container.voice = FailingVoice()
