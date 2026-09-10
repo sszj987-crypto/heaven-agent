@@ -42,11 +42,11 @@ test("MiniMax keeps saved advanced values in a closed disclosure and its key out
   assert.match(html, /aria-pressed="true"[^>]*>MiniMax/);
 });
 
-test("local speech does not render cloud credentials or an installer in Settings", () => {
+test("local speech does not render cloud credentials and owns local component installation", () => {
   const html = renderComponent("components/settings/TTSSettingsSection.tsx#TTSSettingsSection", {
     tts: { ...tts, provider: "local" }, onSaved: async () => {},
   });
   assert.doesNotMatch(html, /type="password"/);
   assert.match(html, /aria-pressed="true"[^>]*>本地/);
-  assert.doesNotMatch(html, /<button[^>]*>安装语音组件/);
+  assert.match(html, /本地语音组件/);
 });

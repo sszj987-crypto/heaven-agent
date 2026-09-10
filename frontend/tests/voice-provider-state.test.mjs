@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { voiceProviderPresentation, loadVoicePanelStatus, pollVoiceCreation } from "../components/soul/voice-provider-state.ts";
+import { voiceProviderPresentation, pollVoiceCreation } from "../components/soul/voice-provider-state.ts";
 
-test("MiniMax never shows the local installer, even without local packages", () => {
+test("MiniMax keeps its tone-management controls independent of local packages", () => {
   for (const state of ["no_voice", "failed", "not_installed", "ready"]) {
     const view = voiceProviderPresentation({ provider: "minimax", state, has_reference: state === "ready" });
-    assert.equal(view.showInstaller, false);
     assert.equal(view.showUpload, true);
     assert.equal(view.ready, state === "ready");
     assert.equal(view.canRetry, state === "failed");
@@ -47,21 +46,14 @@ test("unconfigured or creating MiniMax cannot submit another sample", () => {
   }
 });
 
-test("local missing package shows installer and hides upload", () => {
+test("local missing package hides upload; installation belongs to Settings", () => {
   const view = voiceProviderPresentation({ provider: "local", state: "not_installed", has_reference: false });
-  assert.equal(view.showInstaller, true);
   assert.equal(view.showUpload, false);
 });
 
-test("status loading asks provider first and never checks local installation for cloud", async () => {
-  const calls = [];
-  const cloud = { provider: "minimax", state: "no_voice", has_reference: false };
-  const result = await loadVoicePanelStatus(async () => { calls.push("provider"); return cloud; }, async () => { throw Error("local installer must not run"); });
-  assert.deepEqual(result, { status: cloud, installation: null });
-  const local = { provider: "local", state: "not_installed", has_reference: false };
-  const installation = { state: "installing", message: "downloading" };
-  assert.deepEqual(await loadVoicePanelStatus(async () => { calls.push("provider"); return local; }, async () => { calls.push("installation"); return installation; }), { status: local, installation });
-  assert.deepEqual(calls, ["provider", "provider", "installation"]);
+test("voice timbre owns provider-specific recording states, not installation state", () => {
+  assert.equal(voiceProviderPresentation({ provider: "minimax", state: "no_voice", has_reference: false }).showUpload, true);
+  assert.equal(voiceProviderPresentation({ provider: "local", state: "not_installed", has_reference: false }).showUpload, false);
 });
 
 test("cloud creation polling reaches ready or failed and stops polling terminal states", async (t) => {

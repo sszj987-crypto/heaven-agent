@@ -2,21 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  fetchVoiceInstallation, fetchVoiceStatus, fetchVoicePreview, installVoice,
-  markOnboardingStep, uploadVoiceSample, type VoiceInstallationStatus, type VoiceStatus,
+  fetchVoiceStatus, fetchVoicePreview, markOnboardingStep, uploadVoiceSample, type VoiceStatus,
 } from "@/lib/api";
-import { voiceInstallPresentation } from "./voice-install-state";
-import { loadVoicePanelStatus, pollVoiceCreation, voiceProviderPresentation } from "./voice-provider-state";
+import { pollVoiceCreation, voiceProviderPresentation } from "./voice-provider-state";
 import { cloudAudioFileError, createVoiceRecording, createVoicePreview } from "./voice-audio";
 
 export default function VoicePanel() {
   const [status, setStatus] = useState<VoiceStatus | null>(null);
-  const [installation, setInstallation] = useState<VoiceInstallationStatus | null>(null);
   const [recording, setRecording] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [installing, setInstalling] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -28,10 +24,10 @@ export default function VoicePanel() {
   const load = useCallback(async () => {
     const current = lifecycle.current;
     try {
-      const result = await loadVoicePanelStatus(fetchVoiceStatus, fetchVoiceInstallation);
+      const result = await fetchVoiceStatus();
       if (current !== lifecycle.current) return;
-      setStatus(result.status); setInstallation(result.installation); setLoadError("");
-      localStorage.setItem("voice_ready", String(result.status.ready));
+      setStatus(result); setLoadError("");
+      localStorage.setItem("voice_ready", String(result.ready));
     } catch (error) {
       if (current === lifecycle.current) setLoadError(error instanceof Error ? error.message : "无法读取声音状态");
     }
@@ -47,22 +43,6 @@ export default function VoicePanel() {
   }, [load]);
 
   useEffect(() => {
-    if (status?.provider !== "local" || installation?.state !== "installing") return;
-    let cancelled = false;
-    const timer = window.setInterval(async () => {
-      try {
-        const next = await fetchVoiceInstallation();
-        if (cancelled) return;
-        setInstallation(next);
-        if (next.state === "installed") void load();
-      } catch (error) {
-        if (!cancelled) setLoadError(error instanceof Error ? error.message : "无法读取安装进度");
-      }
-    }, 1500);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [status?.provider, installation?.state, load]);
-
-  useEffect(() => {
     if (status?.provider !== "minimax" || status.state !== "creating") return;
     return pollVoiceCreation({
       fetchStatus: fetchVoiceStatus,
@@ -74,15 +54,6 @@ export default function VoicePanel() {
       onError: error => setLoadError(error.message),
     });
   }, [status?.provider, status?.state, load]);
-
-  const startInstall = async () => {
-    const current = lifecycle.current;
-    setInstalling(true); setLoadError("");
-    try { await installVoice(); if (current === lifecycle.current) await load(); }
-    catch (error) {
-      if (current === lifecycle.current) setLoadError(error instanceof Error ? error.message : "语音组件安装失败");
-    } finally { if (current === lifecycle.current) setInstalling(false); }
-  };
 
   const submit = async (blob: Blob) => {
     const current = lifecycle.current;
@@ -135,12 +106,7 @@ export default function VoicePanel() {
     void previewRef.current.play();
   };
 
-  const localInstallation = status?.provider === "local" ? installation : null;
-  const installView = localInstallation ? voiceInstallPresentation(localInstallation.state) : null;
-  const currentStatus = status && localInstallation && localInstallation.state !== "installed"
-    ? { ...status, state: localInstallation.state, message: localInstallation.message }
-    : status;
-  const view = currentStatus ? voiceProviderPresentation(currentStatus) : null;
+  const view = status ? voiceProviderPresentation(status) : null;
   const busy = uploading || preparing || processing;
 
   return (
@@ -150,13 +116,8 @@ export default function VoicePanel() {
       </div>
       <div className="flex-1 p-6 space-y-6 overflow-y-auto">
         <div role="status" className={`rounded-xl border p-4 flex items-center gap-3 ${view?.ready ? "border-green-500/30 bg-green-500/5" : "border-white/10 bg-white/5"}`}>
-          <div className={`w-3 h-3 shrink-0 rounded-full ${view?.ready ? "bg-green-400" : installView?.installing ? "bg-amber-300 animate-pulse" : "bg-white/20"}`} />
-          <span className="min-w-0 flex-1 text-sm">{loadError || currentStatus?.message || "正在读取声音状态..."}</span>
-          {view?.showInstaller && installView?.canInstall && (
-            <button type="button" onClick={startInstall} disabled={installing} className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40">
-              {installation?.state === "failed" ? "重试安装" : "安装语音组件"}
-            </button>
-          )}
+          <div className={`w-3 h-3 shrink-0 rounded-full ${view?.ready ? "bg-green-400" : "bg-white/20"}`} />
+          <span className="min-w-0 flex-1 text-sm">{loadError || status?.message || "正在读取声音状态..."}</span>
           {loadError && <button type="button" onClick={() => void load()} className="text-xs text-white/60">重新读取</button>}
         </div>
         {view?.showUpload && (
@@ -194,7 +155,10 @@ export default function VoicePanel() {
           </p>
         )}
         {message && <p role="status" className={`text-xs ${message.includes("成功") ? "text-green-400" : "text-red-400"}`}>{message}</p>}
-        {!view?.showUpload && <p className="text-xs text-white/30">文字对话不受影响。</p>}
+        {status?.provider === "local" && status.state === "not_installed" && (
+          <p className="text-xs leading-5 text-white/40">本地语音组件尚未安装，请前往“设置 → 语音服务 → 本地”安装。文字对话不受影响。</p>
+        )}
+        {!view?.showUpload && status?.state !== "not_installed" && <p className="text-xs text-white/30">文字对话不受影响。</p>}
       </div>
     </div>
   );

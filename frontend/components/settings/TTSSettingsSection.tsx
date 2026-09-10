@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { testTTSConnection, updateSettings, type TTSProvider, type TTSSettings } from "@/lib/api";
+import { useEffect, useState } from "react";
+import {
+  fetchVoiceInstallation, installVoice, testTTSConnection, updateSettings,
+  type TTSProvider, type TTSSettings, type VoiceInstallationStatus,
+} from "@/lib/api";
+import { voiceInstallPresentation } from "./voice-install-state";
 import {
   buildTTSUpdate,
   invalidateTTSConnection,
@@ -38,7 +42,44 @@ export function TTSSettingsSection({
   const [testing, setTesting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<TTSConnectionStatus>({ revision: 0, result: null, error: null });
   const [message, setMessage] = useState("");
+  const [installation, setInstallation] = useState<VoiceInstallationStatus | null>(null);
+  const [installationError, setInstallationError] = useState("");
+  const [installing, setInstalling] = useState(false);
   const formLocked = isTTSFormLocked(saving);
+
+  useEffect(() => {
+    if (form.provider !== "local") return;
+    let cancelled = false;
+    void fetchVoiceInstallation()
+      .then((status) => {
+        if (!cancelled) {
+          setInstallation(status);
+          setInstallationError("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setInstallationError(error instanceof Error ? error.message : "无法读取语音组件状态");
+      });
+    return () => { cancelled = true; };
+  }, [form.provider]);
+
+  useEffect(() => {
+    if (form.provider !== "local" || installation?.state !== "installing") return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await fetchVoiceInstallation();
+        if (!cancelled) {
+          setInstallation(status);
+          setInstallationError("");
+        }
+      } catch (error) {
+        if (!cancelled) setInstallationError(error instanceof Error ? error.message : "无法读取安装进度");
+      }
+    };
+    const timer = window.setInterval(() => { void poll(); }, 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [form.provider, installation?.state]);
 
   const invalidateConnection = () => setConnectionStatus(invalidateTTSConnection);
 
@@ -81,6 +122,21 @@ export function TTSSettingsSection({
     }
   };
 
+  const startInstallation = async () => {
+    setInstalling(true);
+    setInstallationError("");
+    try {
+      await installVoice();
+      setInstallation(await fetchVoiceInstallation());
+    } catch (error) {
+      setInstallationError(error instanceof Error ? error.message : "语音组件安装失败");
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const installView = installation ? voiceInstallPresentation(installation.state) : null;
+
   return (
     <section aria-labelledby="speech-settings-title" className="settings-panel space-y-5">
       <header className="space-y-2">
@@ -107,11 +163,45 @@ export function TTSSettingsSection({
 
       <p className="text-sm leading-6 text-stone-400">
         {form.provider === "local"
-          ? "在本机生成语音。语音组件安装和音色管理请前往“灵魂档案 → 语音音色”。"
+          ? "在本机生成语音。在此安装和更新本地语音组件；录制声音与音色管理请前往“灵魂档案 → 语音音色”。"
           : form.provider === "minimax"
             ? "使用 MiniMax 云端生成语音，无需安装本地语音合成组件。音色管理请前往“灵魂档案 → 语音音色”。"
             : "使用 OpenAI / NewAPI 格式的云端语音接口，无需安装本地语音组件。在这里配置服务商提供的 voice 名称或 ID。"}
       </p>
+
+      {form.provider === "local" && (
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4 space-y-3" aria-live="polite">
+          <div className="flex items-start gap-3">
+            <div className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${installation?.state === "installed" ? "bg-green-400" : installView?.installing ? "bg-amber-300 animate-pulse" : "bg-white/25"}`} />
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm text-stone-200">本地语音组件</h3>
+              <p className="mt-1 text-xs leading-5 text-stone-400">
+                {installationError || installation?.message || "正在读取语音组件状态..."}
+              </p>
+            </div>
+            {installView?.canInstall && (
+              <button
+                type="button"
+                onClick={startInstallation}
+                disabled={installing}
+                className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40"
+              >
+                {installation?.state === "failed" ? "重试安装" : "安装语音组件"}
+              </button>
+            )}
+          </div>
+          {installView?.restartRequired && (
+            <p className="text-xs leading-5 text-amber-100/70">重启 Heaven Agent 后，本地语音与音色录制功能即可使用。</p>
+          )}
+          {installationError && (
+            <button type="button" onClick={() => {
+              void fetchVoiceInstallation()
+                .then((status) => { setInstallation(status); setInstallationError(""); })
+                .catch((error) => setInstallationError(error instanceof Error ? error.message : "无法读取语音组件状态"));
+            }} className="text-xs text-white/60 hover:text-white">重新读取</button>
+          )}
+        </div>
+      )}
 
       <label className="flex items-start gap-3 rounded-lg border border-white/10 px-4 py-3">
         <input

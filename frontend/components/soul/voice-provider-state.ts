@@ -1,13 +1,4 @@
-import type { TTSProvider, VoiceStatus, VoiceInstallationStatus } from "@/lib/api";
-
-export async function loadVoicePanelStatus(
-  fetchStatus: () => Promise<VoiceStatus>,
-  fetchInstallation: () => Promise<VoiceInstallationStatus>,
-) {
-  const status = await fetchStatus();
-  const installation = status.provider === "local" ? await fetchInstallation() : null;
-  return { status, installation };
-}
+import type { TTSProvider, VoiceStatus } from "@/lib/api";
 
 // Poll serially only while creation is pending; disposal also invalidates in-flight reads.
 export function pollVoiceCreation(callbacks: {
@@ -42,12 +33,10 @@ export function voiceProviderPresentation(status: {
   supports_voice_cloning: boolean;
   preview_available?: boolean;
 }) {
-  const showInstaller = status.provider === "local"
-    && ["not_installed", "installing", "restart_required", "failed"].includes(status.state);
+  const blockedByLocalInstallation = status.provider === "local" && status.state === "not_installed";
   return {
-    showInstaller,
     showUpload: (status.supports_voice_cloning ?? status.provider !== "openai_compatible")
-      && !showInstaller && !["not_configured", "creating"].includes(status.state),
+      && !blockedByLocalInstallation && !["not_configured", "creating"].includes(status.state),
     ready: status.state === "ready" && (status.ready ?? status.has_reference),
     showPreview: status.provider === "minimax" && status.state === "ready"
       && status.has_reference && status.preview_available === true,

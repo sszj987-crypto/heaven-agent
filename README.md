@@ -52,7 +52,7 @@ python3 scripts/bootstrap.py
 
 ## 按需安装语音
 
-进入“档案 → 语音音色”，当前状态为“语音组件未安装”时点击“安装语音组件”。安装在后台进行，完成后按页面提示重启 Heaven Agent；文字对话在安装期间仍可使用。模型下载支持断点续传。
+进入“设置 → 语音服务 → 本地”，当前状态为“语音组件未安装”时点击“安装语音组件”。安装在后台进行，完成后按页面提示重启 Heaven Agent；文字对话在安装期间仍可使用。模型下载支持断点续传。
 
 也可以使用命令行安装：
 
@@ -207,7 +207,7 @@ curl http://localhost:8326/system/status
 
 - **提示 Python 版本不支持**：安装 Python 3.11、3.12 或 3.13，然后重新运行启动脚本。损坏或失效的 `.venv` 会被自动修复。
 - **找不到 Node/npm**：安装 Node.js 22+，确认 `node --version` 和 `npm --version` 可用。
-- **文字可用、语音不可用**：在“档案 → 语音音色”点击安装，完成后重启；也可运行 `bootstrap.py --voice`。安装 `ffmpeg` 后再查看 `/system/status`。
+- **文字可用、语音不可用**：在“设置 → 语音服务 → 本地”点击安装，完成后重启；也可运行 `bootstrap.py --voice`。安装 `ffmpeg` 后再查看 `/system/status`。
 - **语音安装失败**：直接点击“重试安装”即可继续未完成的模型下载。命令行安装失败时只显示末尾错误摘要，不会再因 `mlx-audio[all]` 依赖回溯反复刷屏。
 - **声音可用但语气不变化**：查看 `/settings/voice/status` 的 `supports_instruction`。官方跨平台 CosyVoice 零样本后端只克隆音色，不支持逐轮语气指令；Apple Silicon 的 MLX 后端支持该能力。
 - **LLM 401/404**：检查 API Key、Base URL 与模型名；保存设置后客户端会立即热更新。
