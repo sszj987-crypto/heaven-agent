@@ -9,6 +9,7 @@ Run from the repository root with the project virtual environment activated:
 from __future__ import annotations
 
 import platform
+import os
 import shutil
 import subprocess
 import sys
@@ -20,9 +21,11 @@ OUT = FRONTEND / "out"
 APP_NAME = "Heaven Agent"
 
 
-def run(command: list[str], *, cwd: Path = ROOT) -> None:
+def run(
+    command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None
+) -> None:
     print("+", " ".join(command))
-    subprocess.run(command, cwd=cwd, check=True)
+    subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
 def main() -> None:
@@ -33,7 +36,8 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit("请先运行: .venv/bin/python -m pip install -e '.[desktop]'") from exc
 
-    run(["npm", "run", "build"], cwd=FRONTEND)
+    frontend_env = os.environ | {"NEXT_PUBLIC_API_URL": ""}
+    run(["npm", "run", "build"], cwd=FRONTEND, env=frontend_env)
     if not (OUT / "index.html").is_file():
         raise SystemExit("前端静态构建失败：未生成 frontend/out/index.html")
 
@@ -52,6 +56,7 @@ def main() -> None:
         "--collect-all", "chromadb",
         "--collect-all", "sentence_transformers",
         "--collect-all", "tokenizers",
+        "--collect-all", "webview",
         str(ROOT / "src" / "desktop.py"),
     ])
     print(f"\n完成：{dist / (APP_NAME + '.app')}")

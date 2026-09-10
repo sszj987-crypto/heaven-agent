@@ -1,4 +1,6 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8326";
+// The packaged desktop UI is served by the same local process as the API and
+// deliberately supplies an empty value. Development keeps its explicit URL.
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8326";
 
 export function formatApiError(payload: unknown, status: number, fallback: string): string {
   if (payload && typeof payload === "object") {

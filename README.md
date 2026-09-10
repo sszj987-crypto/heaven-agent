@@ -36,7 +36,7 @@ scripts\start.bat
 open 'dist/Heaven Agent.app'
 ```
 
-构建结果为 `dist/Heaven Agent.app`。它内置 Python、后端和已静态化的前端，最终用户不需要运行 `start.sh`，也不需要安装 Node.js。首次打开后会自动显示应用界面；关闭浏览器标签不会停止后台应用，需在 Dock 中退出 Heaven Agent。
+构建结果为 `dist/Heaven Agent.app`。它内置 Python、后端、macOS WebKit 原生窗口和已静态化的前端，最终用户不需要运行 `start.sh`，也不需要安装 Node.js。首次打开会显示独立的 Heaven Agent 窗口，不会打开浏览器；关闭该窗口会同时停止本地服务。
 
 当前构建产物仅适用于与构建机器相同的 macOS 架构（Apple Silicon 或 Intel）。发布给两种架构前，应分别构建，或后续制作 universal 包。
 

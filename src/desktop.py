@@ -7,8 +7,8 @@ import socket
 import sys
 import threading
 import time
-import webbrowser
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 
@@ -16,7 +16,6 @@ from src.main import create_app
 
 APP_NAME = "Heaven Agent"
 HOST = "127.0.0.1"
-PORT = 8326
 
 
 def bundled_root() -> Path:
@@ -64,21 +63,50 @@ def wait_for_port(host: str, port: int, timeout: float = 20) -> bool:
     return False
 
 
+def find_available_port(host: str = HOST) -> int:
+    """Choose an unused loopback port so a development server cannot collide."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
+        candidate.bind((host, 0))
+        return int(candidate.getsockname()[1])
+
+
+def show_native_window(webview_module: Any, url: str) -> None:
+    """Run the macOS WebKit window loop on the application's main thread."""
+    webview_module.create_window(
+        APP_NAME,
+        url,
+        width=1280,
+        height=820,
+        min_size=(960, 640),
+        background_color="#1c1917",
+    )
+    webview_module.start(private_mode=True)
+
+
 def run() -> None:
+    try:
+        import webview
+    except ImportError as exc:
+        raise RuntimeError("缺少原生窗口组件，请重新构建 Heaven Agent.app") from exc
+
     resources = bundled_root()
     runtime_root = user_data_root()
     seed_runtime_files(resources, runtime_root)
 
+    port = find_available_port()
     app = create_app(project_root=runtime_root, static_dir=resources / "frontend")
     server = uvicorn.Server(
-        uvicorn.Config(app, host=HOST, port=PORT, log_level="error", access_log=False)
+        uvicorn.Config(app, host=HOST, port=port, log_level="error", access_log=False)
     )
     thread = threading.Thread(target=server.run, name="heaven-agent-api", daemon=True)
     thread.start()
-    if not wait_for_port(HOST, PORT):
+    if not wait_for_port(HOST, port):
         raise RuntimeError("Heaven Agent 启动超时，请查看 ~/Library/Application Support/Heaven Agent/log")
-    webbrowser.open_new("http://127.0.0.1:8326/")
-    thread.join()
+    try:
+        show_native_window(webview, f"http://{HOST}:{port}/")
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
 
 
 if __name__ == "__main__":
