@@ -86,8 +86,8 @@ class TestSettings:
 
         # 验证写回文件
         saved = json.loads((self._config_dir / "llm.json").read_text())
-        assert saved["api_key"] == "new-key"
-        assert saved["model"] == "gpt-4o-mini"
+        assert saved["cloud"]["api_key"] == "new-key"
+        assert saved["cloud"]["model"] == "gpt-4o-mini"
 
     def test_masked_api_key_does_not_overwrite_saved_secret(self):
         Settings.init(self._config_dir)
@@ -96,7 +96,19 @@ class TestSettings:
 
         assert Settings.get().llm.api_key == "sk-test123"
         saved = json.loads((self._config_dir / "llm.json").read_text())
-        assert saved["api_key"] == "sk-test123"
+        assert saved["cloud"]["api_key"] == "sk-test123"
+
+    def test_local_llm_keeps_saved_cloud_configuration(self):
+        settings = Settings.init(self._config_dir)
+        settings.update_llm(
+            provider="local",
+            ollama={"model": "qwen3:8b", "temperature": 0.2},
+        )
+
+        saved = json.loads((self._config_dir / "llm.json").read_text())
+        assert saved["provider"] == "local"
+        assert saved["cloud"]["api_key"] == "sk-test123"
+        assert saved["ollama"]["model"] == "qwen3:8b"
 
     def test_update_tts_keeps_secret_when_key_is_omitted(self):
         self._write_tts(api_key="existing")

@@ -1,7 +1,7 @@
 import httpx
 from urllib.parse import urlparse
 from .client import LLMClient
-from ..config.loader import LLMConfig
+from ..config.loader import LLMConfig, LLMEndpointConfig
 
 # 全局懒汉单例
 _llm_client: LLMClient | None = None
@@ -31,29 +31,36 @@ class LLMManager:
     """根据配置创建 LLMClient 实例"""
 
     @staticmethod
-    def get_client(config: LLMConfig) -> LLMClient:
+    def get_client(config: LLMConfig | LLMEndpointConfig) -> LLMClient:
         """工厂方法，创建 LLM 客户端（允许空 API Key，实际请求时校验）"""
-        if not config.base_url:
+        endpoint = config.active if isinstance(config, LLMConfig) else config
+        if not endpoint.base_url:
             raise ValueError("API Base URL is not configured.")
-        parsed = urlparse(config.base_url)
+        parsed = urlparse(endpoint.base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("API Base URL must be a valid HTTP(S) URL.")
         return LLMClient(
-            base_url=config.base_url,
-            api_key=config.api_key,
-            model=config.model,
-            temperature=config.temperature,
+            base_url=endpoint.base_url,
+            api_key=endpoint.api_key,
+            model=endpoint.model,
+            temperature=endpoint.temperature,
         )
 
     @staticmethod
-    async def test_connection(config: LLMConfig) -> bool:
+    async def test_connection(config: LLMConfig | LLMEndpointConfig) -> bool:
         """测试 LLM 连接是否可用"""
+        endpoint = config.active if isinstance(config, LLMConfig) else config
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.get(
-                    f"{config.base_url.rstrip('/')}/models",
-                    headers={"Authorization": f"Bearer {config.api_key}"},
+                    f"{endpoint.base_url.rstrip('/')}/models",
+                    headers={"Authorization": f"Bearer {endpoint.api_key}"},
                 )
-                return response.status_code == 200
+                if response.status_code != 200:
+                    return False
+                if isinstance(config, LLMConfig) and config.provider == "local":
+                    models = response.json().get("data", [])
+                    return any(item.get("id") == endpoint.model for item in models)
+                return True
         except Exception:
             return False

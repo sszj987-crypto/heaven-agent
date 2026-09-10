@@ -39,7 +39,9 @@ test("MiniMax keeps saved advanced values in a closed disclosure and its key out
   assert.match(advanced, /value="saved-speech-model"/);
   assert.doesNotMatch(advanced, /type="password"/);
   assert.match(html, /MiniMax 语音密钥/);
-  assert.match(html, /aria-pressed="true"[^>]*>MiniMax/);
+  assert.match(html, /aria-pressed="true"[^>]*>云端/);
+  assert.match(html, /云端渠道/);
+  assert.match(html, /<option value="minimax" selected="">MiniMax/);
 });
 
 test("local speech does not render cloud credentials and owns local component installation", () => {

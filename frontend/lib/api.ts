@@ -22,10 +22,18 @@ export interface SoulProfile {
 
 export interface Settings {
   llm: {
-    base_url: string;
-    model: string;
-    temperature: number | null;
-    api_key_configured: boolean;
+    provider: "cloud" | "local";
+    cloud: {
+      base_url: string;
+      model: string;
+      temperature: number | null;
+      api_key_configured: boolean;
+    };
+    ollama: {
+      base_url: string;
+      model: string;
+      temperature: number | null;
+    };
   };
   tts: TTSSettings;
   log_level: string;
@@ -102,7 +110,11 @@ export async function fetchSettings(): Promise<Settings> {
 }
 
 export async function updateSettings(data: Partial<{
-  llm: Partial<{ base_url: string; model: string; temperature: number; api_key: string }>;
+  llm: Partial<{
+    provider: "cloud" | "local";
+    cloud: Partial<{ base_url: string; model: string; temperature: number; api_key: string }>;
+    ollama: Partial<{ base_url: string; model: string; temperature: number }>;
+  }>;
   tts: TTSSettingsUpdate;
   log_level: string;
 }>): Promise<void> {

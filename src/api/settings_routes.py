@@ -1,5 +1,4 @@
 from copy import deepcopy
-from dataclasses import replace
 from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -32,10 +31,18 @@ async def get_settings(container: ApplicationContainer = Depends(get_container))
     settings = container.settings
     return {
         "llm": {
-            "base_url": settings.llm.base_url,
-            "model": settings.llm.model,
-            "temperature": settings.llm.temperature,
-            "api_key_configured": bool(settings.llm.api_key),
+            "provider": settings.llm.provider,
+            "cloud": {
+                "base_url": settings.llm.cloud.base_url,
+                "model": settings.llm.cloud.model,
+                "temperature": settings.llm.cloud.temperature,
+                "api_key_configured": bool(settings.llm.cloud.api_key),
+            },
+            "ollama": {
+                "base_url": settings.llm.ollama.base_url,
+                "model": settings.llm.ollama.model,
+                "temperature": settings.llm.ollama.temperature,
+            },
         },
         "tts": {
             "provider": settings.tts.provider,
@@ -65,18 +72,35 @@ async def update_settings(
     settings = container.settings
     if body.llm is not None:
         llm_update = body.llm.model_dump(exclude_unset=True)
-        candidate_config = replace(settings.llm)
-        for key, value in llm_update.items():
+        cloud_update = {
+            **{key: value for key, value in llm_update.items() if key in ("base_url", "api_key", "model", "temperature")},
+            **(llm_update.get("cloud") or {}),
+        }
+        candidate_config = deepcopy(settings.llm)
+        if llm_update.get("provider") is not None:
+            candidate_config.provider = llm_update["provider"]
+        for key, value in cloud_update.items():
             if key == "api_key" and value in (None, "***"):
                 continue
             if value is not None:
-                setattr(candidate_config, key, value)
+                setattr(candidate_config.cloud, key, value)
+        for key, value in (llm_update.get("ollama") or {}).items():
+            if value is not None:
+                setattr(candidate_config.ollama, key, value)
         try:
             replacement = LLMManager.get_client(candidate_config)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
-            settings.update_llm(**llm_update)
+            if any(key in llm_update for key in ("provider", "cloud", "ollama")):
+                settings.update_llm(
+                    provider=llm_update.get("provider"),
+                    cloud=cloud_update or None,
+                    ollama=llm_update.get("ollama"),
+                )
+            else:
+                # Keep the pre-provider request shape functional for integrations.
+                settings.update_llm(**cloud_update)
         except Exception:
             await replacement.aclose()
             raise

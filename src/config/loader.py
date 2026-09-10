@@ -5,11 +5,89 @@ from typing import Literal
 
 
 @dataclass
-class LLMConfig:
+class LLMEndpointConfig:
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     model: str = "gpt-4o"
     temperature: float = 0.7
+
+
+@dataclass
+class OllamaConfig:
+    base_url: str = "http://127.0.0.1:11434/v1"
+    model: str = ""
+    temperature: float = 0.7
+
+
+@dataclass(init=False)
+class LLMConfig:
+    provider: Literal["cloud", "local"]
+    cloud: LLMEndpointConfig
+    ollama: OllamaConfig
+
+    def __init__(
+        self,
+        provider: Literal["cloud", "local"] = "cloud",
+        cloud: LLMEndpointConfig | None = None,
+        ollama: OllamaConfig | None = None,
+        # Kept for callers that construct the formerly-flat configuration.
+        base_url: str | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+    ):
+        self.provider = provider
+        self.cloud = cloud or LLMEndpointConfig()
+        self.ollama = ollama or OllamaConfig()
+        for key, value in (("base_url", base_url), ("api_key", api_key), ("model", model), ("temperature", temperature)):
+            if value is not None:
+                setattr(self.cloud, key, value)
+
+    @property
+    def active(self) -> LLMEndpointConfig:
+        if self.provider == "local":
+            # Ollama ignores this value, but its OpenAI-compatible clients expect one.
+            return LLMEndpointConfig(
+                base_url=self.ollama.base_url,
+                api_key="ollama",
+                model=self.ollama.model,
+                temperature=self.ollama.temperature,
+            )
+        return self.cloud
+
+    # Transitional aliases keep internal integrations with the previous flat
+    # cloud shape working while persisted settings use provider-specific fields.
+    @property
+    def base_url(self) -> str:
+        return self.cloud.base_url
+
+    @base_url.setter
+    def base_url(self, value: str) -> None:
+        self.cloud.base_url = value
+
+    @property
+    def api_key(self) -> str:
+        return self.cloud.api_key
+
+    @api_key.setter
+    def api_key(self, value: str) -> None:
+        self.cloud.api_key = value
+
+    @property
+    def model(self) -> str:
+        return self.cloud.model
+
+    @model.setter
+    def model(self, value: str) -> None:
+        self.cloud.model = value
+
+    @property
+    def temperature(self) -> float:
+        return self.cloud.temperature
+
+    @temperature.setter
+    def temperature(self, value: float) -> None:
+        self.cloud.temperature = value
 
 
 @dataclass
@@ -72,7 +150,29 @@ class ConfigLoader:
         llm_path = self._config_dir / "llm.json"
         if llm_path.exists():
             llm_data = json.loads(llm_path.read_text())
-            config.llm = LLMConfig(**llm_data)
+            # Pre-provider versions stored one flat OpenAI-compatible service.
+            if "provider" not in llm_data and "cloud" not in llm_data:
+                config.llm = LLMConfig(cloud=LLMEndpointConfig(**llm_data))
+            else:
+                provider = llm_data.get("provider", "cloud")
+                if provider not in ("cloud", "local"):
+                    raise ValueError("不支持的对话服务")
+                cloud_data = llm_data.get("cloud", {})
+                ollama_data = llm_data.get("ollama", {})
+                config.llm = LLMConfig(
+                    provider=provider,
+                    cloud=LLMEndpointConfig(
+                        base_url=cloud_data.get("base_url", config.llm.cloud.base_url),
+                        api_key=cloud_data.get("api_key", config.llm.cloud.api_key),
+                        model=cloud_data.get("model", config.llm.cloud.model),
+                        temperature=cloud_data.get("temperature", config.llm.cloud.temperature),
+                    ),
+                    ollama=OllamaConfig(
+                        base_url=ollama_data.get("base_url", config.llm.ollama.base_url),
+                        model=ollama_data.get("model", config.llm.ollama.model),
+                        temperature=ollama_data.get("temperature", config.llm.ollama.temperature),
+                    ),
+                )
 
         tts_path = self._config_dir / "tts.json"
         if tts_path.exists():

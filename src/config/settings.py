@@ -110,16 +110,25 @@ class Settings:
         if path.exists():
             self._circumstances = path.read_text()
 
-    def update_llm(self, **kwargs):
+    def update_llm(self, provider=None, cloud=None, ollama=None, **legacy):
         """更新 LLM 配置并写回 JSON 文件"""
         with self._write_lock:
-            for key, value in kwargs.items():
-                # GET /settings 不返回真实密钥；旧前端可能把掩码原样提交回来。
+            candidate = deepcopy(self._config.llm)
+            if provider is not None:
+                candidate.provider = provider
+            if candidate.provider not in ("cloud", "local"):
+                raise ValueError("不支持的对话服务")
+            cloud_update = {**legacy, **(cloud or {})}
+            for key, value in cloud_update.items():
                 if key == "api_key" and value in (None, "***"):
                     continue
-                if value is not None and hasattr(self._config.llm, key):
-                    setattr(self._config.llm, key, value)
-            self._save_json("llm.json", self._config.llm)
+                if value is not None and key in ("base_url", "api_key", "model", "temperature"):
+                    setattr(candidate.cloud, key, value)
+            for key, value in (ollama or {}).items():
+                if value is not None and key in ("base_url", "model", "temperature"):
+                    setattr(candidate.ollama, key, value)
+            self._save_json("llm.json", candidate)
+            self._config.llm = candidate
 
     def update_tts(
         self,

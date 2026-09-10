@@ -10,7 +10,7 @@ from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
 from src.agent.context import PipelineContext
-from src.api.chat_routes import chat_audio
+from src.api.chat_routes import _require_llm_settings, chat_audio
 from src.api.schemas import (
     AudioRequest,
     MiniMaxSettingsUpdate,
@@ -71,6 +71,14 @@ class FakeSettings:
         for key, value in (openai_compatible or {}).items():
             if value is not None:
                 setattr(self.tts.openai_compatible, key, value)
+
+
+def test_local_ollama_chat_settings_do_not_require_a_user_api_key():
+    config = LLMConfig(provider="local")
+    config.ollama.model = "qwen3:8b"
+    container = SimpleNamespace(settings=SimpleNamespace(llm=config))
+
+    _require_llm_settings(container)
 
 
 class FakeAgent:
@@ -461,7 +469,7 @@ def test_settings_view_never_returns_masked_or_real_api_key():
         response = client.get("/settings")
 
     assert response.status_code == 200
-    assert response.json()["llm"]["api_key_configured"] is True
+    assert response.json()["llm"]["cloud"]["api_key_configured"] is True
     assert "api_key" not in response.json()["llm"]
 
 

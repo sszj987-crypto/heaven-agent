@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from src.llm.manager import LLMManager, replace_llm_client
-from src.config.loader import LLMConfig
+from src.config.loader import LLMConfig, OllamaConfig
 
 
 class TestLLMManager:
@@ -15,6 +15,31 @@ class TestLLMManager:
         config = LLMConfig(base_url="https://api.test.com/v1", api_key="", model="gpt-4o")
         client = LLMManager.get_client(config)
         assert client is not None
+
+    def test_local_ollama_uses_its_endpoint_and_non_secret_placeholder(self):
+        config = LLMConfig(
+            provider="local",
+            ollama=OllamaConfig(base_url="http://127.0.0.1:11434/v1", model="qwen3:8b"),
+        )
+        client = LLMManager.get_client(config)
+
+        assert client.model == "qwen3:8b"
+
+    @pytest.mark.asyncio
+    async def test_local_ollama_connection_requires_the_selected_model(self):
+        config = LLMConfig(
+            provider="local",
+            ollama=OllamaConfig(model="qwen3:8b"),
+        )
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"data": [{"id": "qwen3:8b"}]}
+
+        with patch("httpx.AsyncClient.get", return_value=mock_response):
+            assert await LLMManager.test_connection(config) is True
+
+        mock_response.json.return_value = {"data": [{"id": "other-model"}]}
+        with patch("httpx.AsyncClient.get", return_value=mock_response):
+            assert await LLMManager.test_connection(config) is False
 
     def test_get_client_no_base_url_raises(self):
         config = LLMConfig(base_url="", api_key="sk-test", model="gpt-4o")

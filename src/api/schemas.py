@@ -75,11 +75,23 @@ class ChatFeedbackStatsView(APIModel):
     reasons: dict[str, int]
 
 
-class LLMSettingsView(APIModel):
+class CloudLLMSettingsView(APIModel):
     base_url: str
     model: str
     temperature: float | None = None
     api_key_configured: bool
+
+
+class OllamaSettingsView(APIModel):
+    base_url: str
+    model: str
+    temperature: float | None = None
+
+
+class LLMSettingsView(APIModel):
+    provider: Literal["cloud", "local"]
+    cloud: CloudLLMSettingsView
+    ollama: OllamaSettingsView
 
 
 class MiniMaxSettingsView(APIModel):
@@ -109,7 +121,24 @@ class SettingsView(APIModel):
     log_level: Literal["debug", "error"]
 
 
+class CloudLLMSettingsUpdate(APIModel):
+    base_url: str | None = None
+    model: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    api_key: str | None = None
+
+
+class OllamaSettingsUpdate(APIModel):
+    base_url: str | None = None
+    model: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+
+
 class LLMSettingsUpdate(APIModel):
+    provider: Literal["cloud", "local"] | None = None
+    cloud: CloudLLMSettingsUpdate | None = None
+    ollama: OllamaSettingsUpdate | None = None
+    # Compatibility for callers of the former single cloud configuration.
     base_url: str | None = None
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)

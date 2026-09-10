@@ -92,6 +92,15 @@ export function TTSSettingsSection({
     invalidateConnection();
   };
 
+  const setServiceType = (type: "local" | "cloud") => {
+    if (type === "local") {
+      setProvider("local");
+      return;
+    }
+    // Restore the saved cloud channel; default to MiniMax for a first switch.
+    setProvider(tts.provider === "openai_compatible" ? "openai_compatible" : "minimax");
+  };
+
   const save = async () => {
     setSaving(true);
     setMessage("");
@@ -144,22 +153,37 @@ export function TTSSettingsSection({
         <p className="text-sm leading-6 text-stone-400">将文字回复转换成声音，不影响文字回复的生成。</p>
       </header>
       <div className="flex gap-3">
-        {(["local", "minimax", "openai_compatible"] as const).map((provider) => (
+        {(["local", "cloud"] as const).map((type) => (
           <button
-            key={provider}
-            onClick={() => setProvider(provider)}
-            aria-pressed={form.provider === provider}
+            key={type}
+            onClick={() => setServiceType(type)}
+            aria-pressed={type === "local" ? form.provider === "local" : form.provider !== "local"}
             disabled={formLocked}
             className={`px-4 py-2 text-sm rounded-lg border transition-colors ${
-              form.provider === provider
+              (type === "local" ? form.provider === "local" : form.provider !== "local")
                 ? "bg-white/20 border-white/30 text-white"
                 : "bg-white/5 border-white/10 text-white/40 hover:border-white/20 hover:text-white/60"
             }`}
           >
-            {provider === "local" ? "本地" : provider === "minimax" ? "MiniMax" : "OpenAI 兼容"}
+            {type === "local" ? "本地" : "云端"}
           </button>
         ))}
       </div>
+
+      {form.provider !== "local" && (
+        <label className="block">
+          <span className="text-sm text-stone-300">云端渠道</span>
+          <select
+            value={form.provider}
+            disabled={formLocked}
+            onChange={(event) => setProvider(event.target.value as Exclude<TTSProvider, "local">)}
+            className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white/30"
+          >
+            <option value="minimax">MiniMax</option>
+            <option value="openai_compatible">OpenAI 兼容</option>
+          </select>
+        </label>
+      )}
 
       <p className="text-sm leading-6 text-stone-400">
         {form.provider === "local"

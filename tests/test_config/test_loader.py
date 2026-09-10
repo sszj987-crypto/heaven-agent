@@ -63,6 +63,20 @@ class TestConfigLoader:
             assert config.llm.base_url == "https://api.openai.com/v1"  # default
             assert config.llm.api_key == ""  # default
 
+    def test_load_provider_llm_config_keeps_cloud_and_ollama_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "llm.json").write_text(json.dumps({
+                "provider": "local",
+                "cloud": {"base_url": "https://cloud.example/v1", "api_key": "secret", "model": "cloud-model"},
+                "ollama": {"base_url": "http://localhost:11434/v1", "model": "qwen3:8b", "temperature": 0.2},
+            }))
+            config = ConfigLoader(Path(tmp)).load()
+
+            assert config.llm.provider == "local"
+            assert config.llm.cloud.model == "cloud-model"
+            assert config.llm.ollama.model == "qwen3:8b"
+            assert config.llm.active.api_key == "ollama"
+
     def test_tts_defaults_to_local_minimax_hd(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = ConfigLoader(Path(tmp)).load()

@@ -89,7 +89,7 @@ async def chat_text(
     try:
         ctx = await container.agent_loop.run_once(user_message)
     except Exception as exc:
-        raise _llm_http_error(exc) from exc
+        raise _llm_http_error(exc, container.settings.llm.provider) from exc
 
     response_text = ctx.response
     instruct_text = ctx.instruct_text or "用平静自然的语气说话。"
@@ -142,7 +142,7 @@ async def chat_text_stream(
                     payload = event
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
         except Exception as exc:
-            error = _llm_http_error(exc)
+            error = _llm_http_error(exc, container.settings.llm.provider)
             yield f"data: {json.dumps({'type': 'error', 'message': error.detail}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -177,7 +177,7 @@ async def chat_voice(
     try:
         ctx = await container.agent_loop.run_once(text)
     except Exception as exc:
-        raise _llm_http_error(exc) from exc
+        raise _llm_http_error(exc, container.settings.llm.provider) from exc
 
     response_text = ctx.response
     instruct_text = ctx.instruct_text or "用平静自然的语气说话。"
@@ -251,8 +251,12 @@ async def _generate_audio(tts, text: str, config: TTSConfig) -> bytes:
 
 
 def _require_llm_settings(container: ApplicationContainer) -> None:
-    settings = container.settings
-    if not settings.llm.api_key or not settings.llm.base_url:
+    config = container.settings.llm
+    endpoint = config.active
+    if not endpoint.base_url or not endpoint.model:
+        detail = "请先在设置页面配置本地 Ollama 地址和模型名称" if config.provider == "local" else "请先在设置页面配置 LLM 参数（Base URL、API Key、Model）"
+        raise HTTPException(status_code=400, detail=detail)
+    if config.provider == "cloud" and not endpoint.api_key:
         raise HTTPException(
             status_code=400,
             detail="请先在设置页面配置 LLM 参数（Base URL、API Key、Model）",
@@ -276,15 +280,19 @@ def _voice_available(container: ApplicationContainer) -> bool:
     return bool(getattr(container.voice, "is_ready", container.voice.has_reference))
 
 
-def _llm_http_error(exc: Exception) -> HTTPException:
+def _llm_http_error(exc: Exception, provider: str = "cloud") -> HTTPException:
     reason = str(exc)
     log.error("LLM 调用失败, error_type=%s", type(exc).__name__)
     if "404" in reason or "Not Found" in reason:
-        detail = "LLM 接口地址错误（404），请检查 Base URL 是否正确。DeepSeek 用户请填写 https://api.deepseek.com，OpenAI 用户请填写 https://api.openai.com/v1"
+        detail = (
+            "Ollama 接口地址或模型名称错误（404），请确认 Ollama 已运行且模型已拉取"
+            if provider == "local"
+            else "LLM 接口地址错误（404），请检查 Base URL 是否正确。DeepSeek 用户请填写 https://api.deepseek.com，OpenAI 用户请填写 https://api.openai.com/v1"
+        )
     elif "401" in reason or "Unauthorized" in reason:
         detail = "LLM API Key 无效（401），请检查设置中的 API Key 是否正确"
     elif "Connection" in reason or "connect" in reason or "Name or service not known" in reason:
-        detail = "无法连接 LLM 服务，请检查 Base URL 地址和网络连接"
+        detail = "无法连接本地 Ollama，请确认服务正在运行并检查接口地址" if provider == "local" else "无法连接 LLM 服务，请检查 Base URL 地址和网络连接"
     else:
         detail = "LLM 服务暂时不可用，请稍后重试"
     return HTTPException(status_code=502, detail=detail)
