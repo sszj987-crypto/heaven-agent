@@ -1,3 +1,4 @@
+import asyncio
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ from ..voice.service import VoiceUnavailable
 from .dependencies import MAX_AUDIO_UPLOAD_BYTES, get_container
 from .schemas import (
     LLMConnectionView,
+    ReferenceClipListView,
     SettingsUpdate,
     SettingsView,
     StatusView,
@@ -20,6 +22,7 @@ from .schemas import (
     VoiceUploadView,
     VoiceStatusView,
 )
+from ..voice.reference_selection import LocalReferenceSelection
 
 
 router = APIRouter()
@@ -203,6 +206,81 @@ async def upload_voice_sample(
         raise
     except Exception as exc:
         log.error("声音档案保存失败, error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="音频保存失败，请稍后重试") from exc
+    return {"status": "ok", "preview_available": preview is not None}
+
+
+def _reference_selection(container: ApplicationContainer) -> LocalReferenceSelection:
+    selection = getattr(container, "reference_selection", None)
+    if selection is None:
+        selection = LocalReferenceSelection(container.layout.voice_dir)
+        setattr(container, "reference_selection", selection)
+    return selection
+
+
+async def _read_voice_upload(audio: UploadFile) -> bytes:
+    audio_bytes = await audio.read(MAX_AUDIO_UPLOAD_BYTES + 1)
+    if len(audio_bytes) > MAX_AUDIO_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="音频不能超过 25 MB")
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="音频数据为空")
+    return audio_bytes
+
+
+@router.post("/settings/voice/local-reference/candidates", response_model=ReferenceClipListView)
+async def prepare_local_reference_candidates(
+    audio: UploadFile = File(...),
+    container: ApplicationContainer = Depends(get_container),
+):
+    if container.settings.tts.provider != "local":
+        raise HTTPException(status_code=400, detail="只有本地 CosyVoice 可以选择参考片段")
+    audio_bytes = await _read_voice_upload(audio)
+    try:
+        async with container.soul_lock:
+            clips = await asyncio.to_thread(_reference_selection(container).prepare, audio_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.error("本地参考片段准备失败, error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="音频处理失败，请稍后重试") from exc
+    return {"candidates": clips}
+
+
+@router.get("/settings/voice/local-reference/candidates/{clip_id}/audio")
+async def get_local_reference_candidate_audio(
+    clip_id: str,
+    container: ApplicationContainer = Depends(get_container),
+):
+    if container.settings.tts.provider != "local":
+        raise HTTPException(status_code=404, detail="参考片段不存在")
+    try:
+        audio = await asyncio.to_thread(_reference_selection(container).read, clip_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/settings/voice/local-reference/candidates/{clip_id}/select", response_model=VoiceUploadView)
+async def select_local_reference_candidate(
+    clip_id: str,
+    container: ApplicationContainer = Depends(get_container),
+):
+    if container.settings.tts.provider != "local":
+        raise HTTPException(status_code=400, detail="只有本地 CosyVoice 可以选择参考片段")
+    try:
+        async with container.soul_lock:
+            selection = _reference_selection(container)
+            audio = await asyncio.to_thread(selection.read, clip_id)
+            preview = await container.save_voice_reference(
+                audio, "selected-reference.wav", "audio/wav"
+            )
+            await asyncio.to_thread(selection.clear)
+    except VoiceUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        log.error("本地参考片段保存失败, error_type=%s", type(exc).__name__)
         raise HTTPException(status_code=500, detail="音频保存失败，请稍后重试") from exc
     return {"status": "ok", "preview_available": preview is not None}
 

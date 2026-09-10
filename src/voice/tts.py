@@ -17,6 +17,7 @@ log = get_logger("tts")
 
 SAMPLE_RATE = 24_000
 REFERENCE_AUDIO_FILE = "reference_audio.wav"
+REFERENCE_MAX_DURATION_S = 12
 
 
 # 峰值归一化目标（官方 CosyVoice3 推荐 0.8，留有 headroom 避免削波失真）
@@ -134,10 +135,10 @@ class TTSService:
                 [
                     "ffmpeg", "-y", "-i", str(raw_path),
                     "-ar", str(SAMPLE_RATE), "-ac", "1",
-                    # 截取前 8 秒（CosyVoice 官方推荐 5-8s 参考音频）
+                    # 候选片段已由用户试听选择；保留最多 12 秒以稳定提取音色。
                     # MLX generate() 内部已通过 librosa.effects.trim(top_db=60) 处理静音切除，
                     # 这里仅做格式转换，避免 loudnorm 改变波形动态特征干扰 CAMPlus 编码器
-                    "-t", "8",
+                    "-t", str(REFERENCE_MAX_DURATION_S),
                     "-sample_fmt", "s16",
                     str(self._ref_audio_path),
                 ],
@@ -152,8 +153,7 @@ class TTSService:
                 data, sr = sf.read(str(raw_path))
                 if data.ndim > 1:
                     data = data.mean(axis=1)
-                # 截取前 10 秒
-                max_samples = 10 * sr
+                max_samples = int(REFERENCE_MAX_DURATION_S * sr)
                 if len(data) > max_samples:
                     data = data[:max_samples]
                 if sr != SAMPLE_RATE:

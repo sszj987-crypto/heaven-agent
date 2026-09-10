@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { uploadVoiceSample, fetchVoicePreview, fetchVoiceStatus } from "../lib/api.ts";
+import {
+  fetchVoicePreview, fetchVoiceStatus, localReferenceCandidateAudioUrl,
+  prepareLocalReferenceCandidates, selectLocalReferenceCandidate, uploadVoiceSample,
+} from "../lib/api.ts";
 
 test("status restores saved preview availability without fetching or generating audio", async (t) => {
   const calls = [];
@@ -30,6 +33,26 @@ test("sample uploads preserve File names and MIME and return preview availabilit
   assert.deepEqual(uploads.map(file => [file.name, file.type]), [
     ["my-voice.MP3", "audio/mpeg"], ["reference.webm", "audio/webm;codecs=opus"], ["reference.wav", "audio/wav"],
   ]);
+});
+
+test("local reference clips are prepared, previewed by URL, and selected explicitly", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    calls.push([String(url), init?.method || "GET"]);
+    if (String(url).endsWith("/candidates")) {
+      assert.equal(init?.body.get("audio").name, "reference.wav");
+      return Response.json({ candidates: [{ id: "clip 1", label: "候选片段 1", start_seconds: 0, duration_seconds: 10 }] });
+    }
+    return Response.json({ status: "ok", preview_available: false });
+  });
+
+  assert.deepEqual(await prepareLocalReferenceCandidates(new Blob(["wav"], { type: "audio/wav" })), [
+    { id: "clip 1", label: "候选片段 1", start_seconds: 0, duration_seconds: 10 },
+  ]);
+  assert.match(localReferenceCandidateAudioUrl("clip 1"), /candidates\/clip%201\/audio$/);
+  await selectLocalReferenceCandidate("clip 1");
+  assert.deepEqual(calls.map(call => call[1]), ["POST", "POST"]);
+  assert.match(calls[1][0], /candidates\/clip%201\/select$/);
 });
 
 test("preview is a GET with useful server errors and rejects empty audio", async (t) => {

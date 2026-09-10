@@ -348,6 +348,17 @@ class VoiceUploadView(StatusView):
     preview_available: bool = False
 
 
+class ReferenceClipView(APIModel):
+    id: str
+    label: str
+    start_seconds: float
+    duration_seconds: float
+
+
+class ReferenceClipListView(APIModel):
+    candidates: list[ReferenceClipView]
+
+
 class MemoryStatsView(APIModel):
     total: int
     by_dimension: dict[str, int]

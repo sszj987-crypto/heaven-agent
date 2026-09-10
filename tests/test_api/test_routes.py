@@ -3,6 +3,7 @@ import asyncio
 import io
 import json
 import tempfile
+import wave
 from pathlib import Path
 
 import pytest
@@ -884,6 +885,46 @@ def test_voice_upload_uses_async_provider_operation_when_local_voice_is_unavaila
     assert container.saved_voice_filename == "sample.wav"
     assert container.voice.last_reference == (b"RIFFsample", "sample.wav", "audio/wav")
     assert container.voice.cleanup_retried is True
+
+
+def test_local_reference_selection_requires_user_choice_before_replacing_voice(tmp_path):
+    client, container = make_client()
+    container.settings.tts.provider = "local"
+    container.layout.voice_dir = tmp_path / "voice"
+    container.voice = FakeCloudVoice()
+    raw = io.BytesIO()
+    with wave.open(raw, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(24_000)
+        handle.writeframes(b"\0\0" * (24_000 * 28))
+
+    with client:
+        prepared = client.post(
+            "/settings/voice/local-reference/candidates",
+            files={"audio": ("sample.wav", raw.getvalue(), "audio/wav")},
+        )
+        assert prepared.status_code == 200
+        clips = prepared.json()["candidates"]
+        assert len(clips) == 3
+        assert all(clip["duration_seconds"] == 10.0 for clip in clips)
+        assert container.voice.has_reference is False
+
+        preview = client.get(
+            f"/settings/voice/local-reference/candidates/{clips[0]['id']}/audio"
+        )
+        assert preview.status_code == 200
+        assert preview.headers["content-type"] == "audio/wav"
+        assert preview.content.startswith(b"RIFF")
+
+        selected = client.post(
+            f"/settings/voice/local-reference/candidates/{clips[0]['id']}/select"
+        )
+
+    assert selected.status_code == 200
+    assert container.voice.has_reference is True
+    assert container.saved_voice_filename == "selected-reference.wav"
+    assert not (container.layout.voice_dir / ".reference-selection").exists()
 
 
 def test_tts_connection_uses_cloud_service_without_generating_audio(monkeypatch):

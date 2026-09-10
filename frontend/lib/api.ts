@@ -133,6 +133,13 @@ export interface VoiceStatus {
   preview_available: boolean;
 }
 
+export interface LocalReferenceCandidate {
+  id: string;
+  label: string;
+  start_seconds: number;
+  duration_seconds: number;
+}
+
 export async function fetchVoiceStatus(): Promise<VoiceStatus> {
   const res = await fetch(`${BASE}/settings/voice/status`);
   if (!res.ok) throw await apiError(res, "无法读取声音状态");
@@ -170,7 +177,7 @@ export async function installVoice(): Promise<string> {
   return data.job_id;
 }
 
-export async function uploadVoiceSample(audioBlob: Blob): Promise<{ preview_available: boolean }> {
+function voiceUploadForm(audioBlob: Blob): FormData {
   const formData = new FormData();
   const extensions: Record<string, string> = {
     "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/mp3": "mp3",
@@ -179,6 +186,11 @@ export async function uploadVoiceSample(audioBlob: Blob): Promise<{ preview_avai
   const filename = audioBlob instanceof File ? audioBlob.name
     : `reference.${extensions[audioBlob.type.split(";")[0]] || "bin"}`;
   formData.append("audio", audioBlob, filename);
+  return formData;
+}
+
+export async function uploadVoiceSample(audioBlob: Blob): Promise<{ preview_available: boolean }> {
+  const formData = voiceUploadForm(audioBlob);
   formData.append("name", "soul_voice");
   const res = await fetch(`${BASE}/settings/voice/upload`, {
     method: "POST",
@@ -187,6 +199,27 @@ export async function uploadVoiceSample(audioBlob: Blob): Promise<{ preview_avai
   if (!res.ok) {
     throw await apiError(res, "声音上传失败");
   }
+  return res.json();
+}
+
+export async function prepareLocalReferenceCandidates(audioBlob: Blob): Promise<LocalReferenceCandidate[]> {
+  const res = await fetch(`${BASE}/settings/voice/local-reference/candidates`, {
+    method: "POST", body: voiceUploadForm(audioBlob),
+  });
+  if (!res.ok) throw await apiError(res, "音频处理失败");
+  const data = await res.json() as { candidates: LocalReferenceCandidate[] };
+  return data.candidates;
+}
+
+export function localReferenceCandidateAudioUrl(candidateId: string): string {
+  return `${BASE}/settings/voice/local-reference/candidates/${encodeURIComponent(candidateId)}/audio`;
+}
+
+export async function selectLocalReferenceCandidate(candidateId: string): Promise<{ preview_available: boolean }> {
+  const res = await fetch(`${BASE}/settings/voice/local-reference/candidates/${encodeURIComponent(candidateId)}/select`, {
+    method: "POST",
+  });
+  if (!res.ok) throw await apiError(res, "保存参考片段失败");
   return res.json();
 }
 

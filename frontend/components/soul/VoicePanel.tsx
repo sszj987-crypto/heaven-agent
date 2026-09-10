@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  fetchVoiceStatus, fetchVoicePreview, markOnboardingStep, uploadVoiceSample, type VoiceStatus,
+  fetchVoiceStatus, fetchVoicePreview, localReferenceCandidateAudioUrl, markOnboardingStep,
+  prepareLocalReferenceCandidates, selectLocalReferenceCandidate, uploadVoiceSample,
+  type LocalReferenceCandidate, type VoiceStatus,
 } from "@/lib/api";
 import { pollVoiceCreation, voiceProviderPresentation } from "./voice-provider-state";
 import { cloudAudioFileError, createVoiceRecording, createVoicePreview } from "./voice-audio";
@@ -13,6 +15,7 @@ export default function VoicePanel() {
   const [preparing, setPreparing] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [referenceCandidates, setReferenceCandidates] = useState<LocalReferenceCandidate[]>([]);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -55,26 +58,48 @@ export default function VoicePanel() {
     });
   }, [status?.provider, status?.state, load]);
 
+  const activateReference = async (result: { preview_available: boolean }, successMessage: string) => {
+    const current = lifecycle.current;
+    localStorage.setItem("voice_ready", "true");
+    setStatus(previous => previous ? {
+      ...previous, has_reference: true, ready: true, state: "ready", message: "音色已就绪",
+      preview_available: previous.provider === "minimax" && result.preview_available,
+    } : previous);
+    setMessage(successMessage);
+    await load();
+    if (current === lifecycle.current) {
+      // Progress-marker failure must not misreport an already-created voice as failed.
+      await markOnboardingStep("voice").catch(() => undefined);
+    }
+  };
+
   const submit = async (blob: Blob) => {
     const current = lifecycle.current;
-    setProcessing(false); setUploading(true); setMessage("");
+    setProcessing(false); setUploading(true); setMessage(""); setReferenceCandidates([]);
     previewRef.current?.dispose(); setPreviewBusy(false);
     try {
-      const result = await uploadVoiceSample(blob);
-      if (current !== lifecycle.current) return;
-      localStorage.setItem("voice_ready", "true");
-      setStatus(previous => previous ? {
-        ...previous, has_reference: true, ready: true, state: "ready", message: "音色已就绪",
-        preview_available: previous.provider === "minimax" && result.preview_available,
-      } : previous);
-      setMessage("音色创建成功，后端已保存");
-      await load();
-      if (current === lifecycle.current) {
-        // Progress-marker failure must not misreport an already-created voice as failed.
-        await markOnboardingStep("voice").catch(() => undefined);
+      if (status?.provider === "local") {
+        const candidates = await prepareLocalReferenceCandidates(blob);
+        if (current === lifecycle.current) {
+          setReferenceCandidates(candidates);
+          setMessage("请试听并选择最像 TA 平时说话的一段。");
+        }
+        return;
       }
+      await activateReference(await uploadVoiceSample(blob), "音色创建成功，后端已保存");
     } catch (error) {
       if (current === lifecycle.current) setMessage(error instanceof Error ? error.message : "音色上传失败");
+    } finally { if (current === lifecycle.current) setUploading(false); }
+  };
+
+  const selectCandidate = async (candidateId: string) => {
+    const current = lifecycle.current;
+    setUploading(true); setMessage("");
+    try {
+      await activateReference(await selectLocalReferenceCandidate(candidateId), "参考片段保存成功，已成为当前音色样本");
+      if (current === lifecycle.current) setReferenceCandidates([]);
+    } catch (error) {
+      if (current === lifecycle.current) setMessage(error instanceof Error ? error.message : "保存参考片段失败");
     } finally { if (current === lifecycle.current) setUploading(false); }
   };
 
@@ -122,7 +147,7 @@ export default function VoicePanel() {
         </div>
         {view?.showUpload && (
           <>
-            <p className="text-sm text-white/40 leading-relaxed">上传或录制 10–30 秒清晰语音样本。声音克隆属于 AI 模拟，可能与本人存在差异。</p>
+            <p className="text-sm text-white/40 leading-relaxed">{status?.provider === "local" ? "上传或录制清晰语音后，试听并选择一段最像 TA 日常说话的 10 秒片段。" : "上传或录制 10–30 秒清晰语音样本。"} 声音克隆属于 AI 模拟，可能与本人存在差异。</p>
             {!status?.supports_instruction && (
               <p className="rounded-xl border border-amber-200/10 bg-amber-100/5 px-4 py-3 text-xs leading-5 text-amber-100/55">当前语音后端支持音色克隆，但不支持逐轮语气指令；文字内容不受影响。</p>
             )}
@@ -147,6 +172,20 @@ export default function VoicePanel() {
             </div>
             {processing && <p className="text-xs text-white/30">正在处理录音...</p>}
             {uploading && <p className="text-xs text-white/30">正在上传并创建音色...</p>}
+            {status?.provider === "local" && referenceCandidates.length > 0 && (
+              <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs leading-5 text-white/50">系统优先挑出声音较明显的片段；请以“最像 TA 平时说话”为准选择。选定后才会替换当前参考音。</p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {referenceCandidates.map(candidate => (
+                    <div key={candidate.id} className="space-y-2 rounded-lg border border-white/10 p-3">
+                      <p className="text-xs text-white/70">{candidate.label} · {candidate.duration_seconds} 秒</p>
+                      <audio controls preload="none" className="w-full" src={localReferenceCandidateAudioUrl(candidate.id)} />
+                      <button type="button" onClick={() => void selectCandidate(candidate.id)} disabled={busy} className="w-full rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/20 disabled:opacity-40">选择这段</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
         {status?.provider === "openai_compatible" && (
@@ -154,7 +193,7 @@ export default function VoicePanel() {
             当前 OpenAI 兼容语音服务使用设置页配置的 voice 名称或 ID 合成，不支持在应用内上传录音、创建自定义音色或生成音色试听。
           </p>
         )}
-        {message && <p role="status" className={`text-xs ${message.includes("成功") ? "text-green-400" : "text-red-400"}`}>{message}</p>}
+        {message && <p role="status" className={`text-xs ${message.includes("成功") ? "text-green-400" : message.startsWith("请试听") ? "text-white/50" : "text-red-400"}`}>{message}</p>}
         {status?.provider === "local" && status.state === "not_installed" && (
           <p className="text-xs leading-5 text-white/40">本地语音组件尚未安装，请前往“设置 → 语音服务 → 本地”安装。文字对话不受影响。</p>
         )}
