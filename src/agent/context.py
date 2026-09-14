@@ -13,6 +13,7 @@ class EmotionTag:
 class TTSConfig:
     """TTS 语音合成参数"""
     instruct_text: str = "用平静自然的语气说话。"
+    dialect_instruct_text: str = ""
 
 
 @dataclass

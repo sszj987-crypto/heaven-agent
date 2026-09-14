@@ -28,11 +28,13 @@ export interface Settings {
       model: string;
       temperature: number | null;
       api_key_configured: boolean;
+      reasoning_effort: "default" | "none" | "low" | "medium" | "high";
     };
     ollama: {
       base_url: string;
       model: string;
       temperature: number | null;
+      reasoning_effort: "default" | "none" | "low" | "medium" | "high";
     };
   };
   tts: TTSSettings;
@@ -112,8 +114,8 @@ export async function fetchSettings(): Promise<Settings> {
 export async function updateSettings(data: Partial<{
   llm: Partial<{
     provider: "cloud" | "local";
-    cloud: Partial<{ base_url: string; model: string; temperature: number; api_key: string }>;
-    ollama: Partial<{ base_url: string; model: string; temperature: number }>;
+    cloud: Partial<{ base_url: string; model: string; temperature: number; api_key: string; reasoning_effort: "default" | "none" | "low" | "medium" | "high" }>;
+    ollama: Partial<{ base_url: string; model: string; temperature: number; reasoning_effort: "default" | "none" | "low" | "medium" | "high" }>;
   }>;
   tts: TTSSettingsUpdate;
   log_level: string;
@@ -133,6 +135,22 @@ export interface VoiceStatus {
   preview_available: boolean;
 }
 
+export type DialectId = "mandarin" | "cantonese";
+
+export interface DialectOption {
+  id: DialectId;
+  label: string;
+  description: string;
+}
+
+export interface DialectSettings {
+  enabled: boolean;
+  dialect_id: DialectId;
+  supports_voice_delivery: boolean;
+  voice_delivery_message: string;
+  dialects: DialectOption[];
+}
+
 export interface LocalReferenceCandidate {
   id: string;
   label: string;
@@ -143,6 +161,22 @@ export interface LocalReferenceCandidate {
 export async function fetchVoiceStatus(): Promise<VoiceStatus> {
   const res = await fetch(`${BASE}/settings/voice/status`);
   if (!res.ok) throw await apiError(res, "无法读取声音状态");
+  return res.json();
+}
+
+export async function fetchVoiceDialect(): Promise<DialectSettings> {
+  const res = await fetch(`${BASE}/settings/voice/dialect`);
+  if (!res.ok) throw await apiError(res, "无法读取方言模式");
+  return res.json();
+}
+
+export async function updateVoiceDialect(data: Pick<DialectSettings, "enabled" | "dialect_id">): Promise<DialectSettings> {
+  const res = await fetch(`${BASE}/settings/voice/dialect`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw await apiError(res, "无法保存方言模式");
   return res.json();
 }
 

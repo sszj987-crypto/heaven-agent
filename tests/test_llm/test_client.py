@@ -1,7 +1,7 @@
 import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
-from src.llm.client import LLMClient
+from src.llm.client import LLMClient, _content_from_stream_chunk, _stream_payload
 
 
 class TestLLMClient:
@@ -72,3 +72,48 @@ class TestLLMClient:
             result = await self._client.chat([{"role": "user", "content": ""}])
 
         assert result == ""
+
+    def test_request_disables_reasoning_only_when_configured(self):
+        client = LLMClient(
+            base_url="http://127.0.0.1:11434/v1",
+            api_key="ollama",
+            model="qwen3.5:9b",
+            reasoning_effort="none",
+        )
+
+        body = client._request_body([{"role": "user", "content": "你好"}], stream=True)
+
+        assert body["reasoning_effort"] == "none"
+        assert body["stream"] is True
+
+    def test_stream_usage_is_opt_in_for_compatible_providers(self):
+        client = LLMClient(
+            base_url="http://127.0.0.1:11434/v1",
+            api_key="ollama",
+            model="local-model",
+            include_stream_usage=True,
+        )
+
+        body = client._request_body([{"role": "user", "content": "你好"}], stream=True)
+
+        assert body["stream_options"] == {"include_usage": True}
+
+
+def test_stream_payload_accepts_sse_without_a_space_and_json_lines():
+    assert _stream_payload('data:{"choices": []}') == {"choices": []}
+    assert _stream_payload('{"choices": []}') == {"choices": []}
+    assert _stream_payload("data: [DONE]") == "[DONE]"
+
+
+def test_stream_content_uses_visible_content_and_never_reasoning():
+    content, has_reasoning = _content_from_stream_chunk({
+        "choices": [{"delta": {"reasoning_content": "internal", "content": "你好"}}]
+    })
+    reasoning_only, reasoning_only_present = _content_from_stream_chunk({
+        "choices": [{"delta": {"reasoning_content": "internal"}}]
+    })
+
+    assert content == "你好"
+    assert has_reasoning is True
+    assert reasoning_only == ""
+    assert reasoning_only_present is True

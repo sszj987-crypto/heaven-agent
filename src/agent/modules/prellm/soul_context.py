@@ -12,6 +12,7 @@ class SoulContextModule(PipelineModule):
     _loader = None
     _messages = None
     _builder = None
+    _dialect_settings = None
 
     @classmethod
     def set_deps(cls, soul_loader, message_manager):
@@ -39,8 +40,14 @@ class SoulContextModule(PipelineModule):
         # 后续如需优化，只能缓存不含 circumstances/memories 的静态人格片段。
         skill_card = self._loader.load_skill() if self._loader.has_skill() else None
         memories = getattr(ctx, "retrieved_memories", None) or []
+        dialect = self._dialect_settings.load() if self._dialect_settings is not None else None
         ctx.system_prompt = self._prompt_builder.build(
-            profile, circumstances, skill_card, memories)
+            profile,
+            circumstances,
+            skill_card,
+            memories,
+            dialect.text_instruction if dialect is not None else "",
+        )
         log.info("构建 System Prompt, soul=%s, 长度=%d chars, has_skill=%s, memories=%d",
                  profile.name, len(ctx.system_prompt),
                  bool(skill_card and skill_card.has_content), len(memories))

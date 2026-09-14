@@ -73,3 +73,10 @@ class TestSoulPromptBuilder:
 
         assert '"instruct"' in prompt
         assert "语气" in prompt
+
+    def test_cantonese_instruction_is_before_reply_contract(self):
+        dialect_instruction = "【方言模式：粤语】\n所有 reply 必须使用自然的繁体粤语口语。"
+        prompt = self._builder.build(self._profile, "", dialect_instruction=dialect_instruction)
+
+        assert dialect_instruction in prompt
+        assert prompt.index(dialect_instruction) < prompt.index("【回复格式")

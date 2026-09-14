@@ -4,7 +4,10 @@ import struct
 import numpy as np
 import pytest
 from src.agent.context import TTSConfig
-from src.voice.tts import TTSService, MockTTSService, SAMPLE_RATE, PEAK_NORM_LEVEL, TRAILING_SILENCE_S
+from src.voice.tts import (
+    TTSService, MockTTSService, SAMPLE_RATE, PEAK_NORM_LEVEL, TRAILING_SILENCE_S,
+    compose_instruct_text,
+)
 
 
 def _force_eos_punctuation(text: str) -> str:
@@ -41,6 +44,12 @@ class TestEOSPunctuation:
 
     def test_tilde_preserved(self):
         assert _force_eos_punctuation("好吧～") == "好吧～"
+
+
+def test_dialect_instruction_precedes_turn_prosody_instruction():
+    instruction = compose_instruct_text("用粤语口音说话。", "语气温柔，语速放慢。")
+
+    assert instruction == "You are a helpful assistant.用粤语口音说话。 语气温柔，语速放慢。"
 
 
 class TestPeakNormalization:

@@ -39,11 +39,16 @@ class LLMManager:
         parsed = urlparse(endpoint.base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("API Base URL must be a valid HTTP(S) URL.")
+        reasoning_effort = (
+            None if endpoint.reasoning_effort == "default" else endpoint.reasoning_effort
+        )
         return LLMClient(
             base_url=endpoint.base_url,
             api_key=endpoint.api_key,
             model=endpoint.model,
             temperature=endpoint.temperature,
+            reasoning_effort=reasoning_effort,
+            include_stream_usage=isinstance(config, LLMConfig) and config.provider == "local",
         )
 
     @staticmethod

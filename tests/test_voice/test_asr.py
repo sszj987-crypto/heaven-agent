@@ -21,6 +21,19 @@ class TestASRService:
         result = await self._asr.transcribe(b"data")
         assert result == ""
 
+    @pytest.mark.asyncio
+    async def test_transcribe_passes_dialect_hints(self):
+        mock_result = {"text": "你好呀"}
+        self._asr._transcribe_fn = MagicMock(return_value=mock_result)
+
+        await self._asr.transcribe(
+            b"data", language_hint="zh", initial_prompt="以下是粤语对话"
+        )
+
+        _, kwargs = self._asr._transcribe_fn.call_args
+        assert kwargs["language"] == "zh"
+        assert kwargs["initial_prompt"] == "以下是粤语对话"
+
 
 class TestMockASRService:
     def setup_method(self):

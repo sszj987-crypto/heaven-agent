@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from src.llm.manager import LLMManager, replace_llm_client
-from src.config.loader import LLMConfig, OllamaConfig
+from src.config.loader import LLMConfig, LLMEndpointConfig, OllamaConfig
 
 
 class TestLLMManager:
@@ -24,6 +24,32 @@ class TestLLMManager:
         client = LLMManager.get_client(config)
 
         assert client.model == "qwen3:8b"
+
+    def test_local_qwen35_disables_reasoning_for_ollama_openai_streams(self):
+        config = LLMConfig(
+            provider="local",
+            ollama=OllamaConfig(model="qwen3.5:9b"),
+        )
+
+        client = LLMManager.get_client(config)
+
+        assert client._reasoning_effort == "none"
+        assert client._include_stream_usage is True
+
+    def test_cloud_reasoning_effort_is_endpoint_configuration_not_model_detection(self):
+        config = LLMConfig(
+            cloud=LLMEndpointConfig(
+                base_url="https://api.test/v1",
+                api_key="key",
+                model="any-thinking-model",
+                reasoning_effort="none",
+            ),
+        )
+
+        client = LLMManager.get_client(config)
+
+        assert client._reasoning_effort == "none"
+        assert client._include_stream_usage is False
 
     @pytest.mark.asyncio
     async def test_local_ollama_connection_requires_the_selected_model(self):

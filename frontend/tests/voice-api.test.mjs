@@ -1,9 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  fetchVoicePreview, fetchVoiceStatus, localReferenceCandidateAudioUrl,
+  fetchVoiceDialect, fetchVoicePreview, fetchVoiceStatus, localReferenceCandidateAudioUrl,
   prepareLocalReferenceCandidates, selectLocalReferenceCandidate, uploadVoiceSample,
+  updateVoiceDialect,
 } from "../lib/api.ts";
+
+test("dialect mode is fetched and saved through the voice settings API", async (t) => {
+  const calls = [];
+  const cantonese = {
+    enabled: true, dialect_id: "cantonese", supports_voice_delivery: true,
+    voice_delivery_message: "当前本地 CosyVoice 将使用自然粤语口音合成。",
+    dialects: [{ id: "mandarin", label: "普通话", description: "默认" }, { id: "cantonese", label: "粤语", description: "繁体粤语口语" }],
+  };
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    calls.push([String(url), init]);
+    return Response.json(cantonese);
+  });
+
+  assert.deepEqual(await fetchVoiceDialect(), cantonese);
+  assert.deepEqual(await updateVoiceDialect({ enabled: true, dialect_id: "cantonese" }), cantonese);
+  assert.match(calls[0][0], /\/settings\/voice\/dialect$/);
+  assert.equal(calls[1][1]?.method, "PUT");
+  assert.deepEqual(JSON.parse(calls[1][1]?.body), { enabled: true, dialect_id: "cantonese" });
+});
 
 test("status restores saved preview availability without fetching or generating audio", async (t) => {
   const calls = [];

@@ -15,21 +15,34 @@ class ASRService:
         self._model = model
         self._transcribe_fn = transcribe_fn
 
-    async def transcribe(self, audio_bytes: bytes) -> str:
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        *,
+        language_hint: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> str:
         """
         将音频 bytes 转为文字。
         在线程池中运行 mlx-whisper 推理，避免阻塞事件循环。
         """
         log.debug("ASR 转写开始, audio size=%d bytes, model=%s", len(audio_bytes), self._model)
         try:
-            result = await asyncio.to_thread(self._transcribe_sync, audio_bytes)
+            result = await asyncio.to_thread(
+                self._transcribe_sync, audio_bytes, language_hint, initial_prompt
+            )
             log.debug("ASR 转写完成: %s...", result[:50])
             return result
         except Exception as e:
             log.error("ASR 转写失败: %s\n%s", e, traceback.format_exc())
             raise
 
-    def _transcribe_sync(self, audio_bytes: bytes) -> str:
+    def _transcribe_sync(
+        self,
+        audio_bytes: bytes,
+        language_hint: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> str:
         if self._transcribe_fn is None:
             import mlx_whisper
             transcribe = mlx_whisper.transcribe
@@ -42,7 +55,12 @@ class ASRService:
             tmp_path = f.name
 
         try:
-            result = transcribe(tmp_path, path_or_hf_repo=self._model)
+            options = {"path_or_hf_repo": self._model}
+            if language_hint is not None:
+                options["language"] = language_hint
+            if initial_prompt is not None:
+                options["initial_prompt"] = initial_prompt
+            result = transcribe(tmp_path, **options)
             return result.get("text", "").strip()
         finally:
             Path(tmp_path).unlink(missing_ok=True)
@@ -62,24 +80,42 @@ class FasterWhisperASRService:
         self._model = WhisperModel(self._model_size, device="cpu", compute_type="int8")
         return self._model
 
-    async def transcribe(self, audio_bytes: bytes) -> str:
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        *,
+        language_hint: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> str:
         log.debug("ASR (faster-whisper) 转写开始, audio size=%d bytes, model=%s",
                   len(audio_bytes), self._model_size)
         try:
-            result = await asyncio.to_thread(self._transcribe_sync, audio_bytes)
+            result = await asyncio.to_thread(
+                self._transcribe_sync, audio_bytes, language_hint, initial_prompt
+            )
             log.debug("ASR (faster-whisper) 转写完成: %s...", result[:50])
             return result
         except Exception as e:
             log.error("ASR (faster-whisper) 转写失败: %s\n%s", e, traceback.format_exc())
             raise
 
-    def _transcribe_sync(self, audio_bytes: bytes) -> str:
+    def _transcribe_sync(
+        self,
+        audio_bytes: bytes,
+        language_hint: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> str:
         model = self._load_model()
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(audio_bytes)
             tmp_path = f.name
         try:
-            segments, _ = model.transcribe(tmp_path)
+            options = {}
+            if language_hint is not None:
+                options["language"] = language_hint
+            if initial_prompt is not None:
+                options["initial_prompt"] = initial_prompt
+            segments, _ = model.transcribe(tmp_path, **options)
             return "".join(s.text for s in segments).strip()
         finally:
             Path(tmp_path).unlink(missing_ok=True)
@@ -88,7 +124,7 @@ class FasterWhisperASRService:
 class MockASRService:
     """Mock ASR 用于测试（无 MLX 时使用）"""
 
-    async def transcribe(self, audio_bytes: bytes) -> str:
+    async def transcribe(self, audio_bytes: bytes, **_kwargs) -> str:
         return "[mock speech-to-text output]"
 
 

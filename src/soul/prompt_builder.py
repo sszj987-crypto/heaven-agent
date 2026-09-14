@@ -18,7 +18,8 @@ class SoulPromptBuilder:
 
     def build(self, profile: SoulProfile, circumstances: str,
               skill_card: SkillCard | None = None,
-              memories: list[dict] | None = None) -> str:
+              memories: list[dict] | None = None,
+              dialect_instruction: str = "") -> str:
         soul_name = profile.name
 
         if skill_card and skill_card.has_content:
@@ -30,16 +31,23 @@ class SoulPromptBuilder:
                 + self._build_support_skill_sections(skill_card)
                 + self._format_memories(memories)
                 + self._format_circumstances(circumstances)
+                + self._format_dialect(dialect_instruction)
                 + self._format_reply_constraints()
             )
         else:
             # 冷启动：无 SkillCard，用 soul 维度全覆盖
-            prompt = self._build_legacy(profile, circumstances, soul_name, memories)
+            prompt = self._build_legacy(
+                profile, circumstances, soul_name, memories, dialect_instruction
+            )
 
         log.info("System Prompt 构建完成, length=%d chars, has_skill=%s, memories=%d",
                  len(prompt), bool(skill_card and skill_card.has_content),
                  len(memories) if memories else 0)
         return prompt
+
+    @staticmethod
+    def _format_dialect(instruction: str) -> str:
+        return f"{instruction.strip()}\n\n" if instruction.strip() else ""
 
     # ── Skill Card Sections ──────────────────────────────
 
@@ -147,7 +155,8 @@ class SoulPromptBuilder:
     # ── Legacy（无 SkillCard 时的完整兜底）────────────────
 
     def _build_legacy(self, profile: SoulProfile, circumstances: str,
-                      soul_name: str, memories: list[dict] | None = None) -> str:
+                      soul_name: str, memories: list[dict] | None = None,
+                      dialect_instruction: str = "") -> str:
         """冷启动：无 SkillCard，所有 6 个维度全量注入。"""
         prompt = _LEGACY_TEMPLATE.format(
             basic_info=self._strip_title(profile.get("basic_info")),
@@ -159,6 +168,7 @@ class SoulPromptBuilder:
             circumstances=self._strip_title(circumstances),
             memory_section=self._format_memories(memories),
             soul_name=soul_name,
+            dialect_instruction=self._format_dialect(dialect_instruction),
             voice_prosody=VOICE_PROSODY_RULES,
         )
         return prompt
@@ -207,7 +217,7 @@ _LEGACY_TEMPLATE = """{basic_info}
 7. 用你的口头禅和说话习惯自然回应，就像真正的{soul_name}本人。
 8. 若提供的资料互相冲突，要说明存在不同记录，不要擅自选择其中一个作为事实。
 
-【回复格式 — 必须严格遵守，返回合法 JSON】
+{dialect_instruction}【回复格式 — 必须严格遵守，返回合法 JSON】
 你的每次回复必须是一个合法的 JSON 对象，直接输出：
 
 {{

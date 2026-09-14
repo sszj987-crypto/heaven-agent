@@ -31,6 +31,7 @@ from src.services.voice_installation import (
     VoiceInstallationStatus,
 )
 from src.voice.minimax import MiniMaxError
+from src.voice.dialect import DialectConfig, DialectSettings
 
 
 class FakeSettings:
@@ -353,6 +354,77 @@ def test_voice_chat_response_includes_response_id(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["response_id"].startswith("reply_")
+
+
+def test_voice_dialect_api_persists_cantonese_and_reports_provider_fallback(tmp_path):
+    client, container = make_client()
+    container.dialect_settings = DialectSettings(tmp_path / "voice" / "dialect.json")
+    with client:
+        default = client.get("/settings/voice/dialect")
+        updated = client.put("/settings/voice/dialect", json={
+            "enabled": True, "dialect_id": "cantonese",
+        })
+
+    assert default.status_code == 200
+    assert default.json()["dialect_id"] == "mandarin"
+    assert updated.status_code == 200
+    assert updated.json()["enabled"] is True
+    assert updated.json()["dialect_id"] == "cantonese"
+    assert updated.json()["supports_voice_delivery"] is False
+    assert "无法保证粤语口音" in updated.json()["voice_delivery_message"]
+    assert container.dialect_settings.load() == DialectConfig(True, "cantonese")
+
+
+def test_cantonese_voice_chat_passes_asr_hints(tmp_path, monkeypatch):
+    client, container = make_client()
+    container.voice_installed = True
+    container.dialect_settings = DialectSettings(tmp_path / "voice" / "dialect.json")
+    container.dialect_settings.save(DialectConfig(True, "cantonese"))
+
+    class CantoneseASR:
+        options = None
+
+        async def transcribe(self, _audio, **options):
+            self.options = options
+            return "你好呀"
+
+    asr = CantoneseASR()
+    monkeypatch.setattr("src.api.chat_routes.create_asr_service", lambda: asr)
+    with client:
+        response = client.post(
+            "/chat/voice",
+            files={"audio": ("voice.wav", b"RIFFdata", "audio/wav")},
+        )
+
+    assert response.status_code == 200
+    assert asr.options == {
+        "language_hint": "zh",
+        "initial_prompt": "以下是粤语对话，请使用繁体粤语口语文字准确转写。",
+    }
+
+
+def test_cantonese_audio_sends_dialect_instruction_to_tts(tmp_path):
+    client, container = make_client()
+    container.dialect_settings = DialectSettings(tmp_path / "voice" / "dialect.json")
+    container.dialect_settings.save(DialectConfig(True, "cantonese"))
+
+    class CapturingVoice:
+        is_ready = True
+
+        async def speak(self, _text, config):
+            self.config = config
+            yield b"RIFFcantonese"
+
+    voice = CapturingVoice()
+    container.voice = voice
+    with client:
+        response = client.post("/chat/audio", json={
+            "text": "你好呀", "instruct_text": "温柔一点说。",
+        })
+
+    assert response.status_code == 200
+    assert "粤语口音" in voice.config.dialect_instruct_text
+    assert voice.config.instruct_text == "温柔一点说。"
 
 
 def test_chat_feedback_is_upserted_and_counted():

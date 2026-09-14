@@ -122,10 +122,14 @@ class Settings:
             for key, value in cloud_update.items():
                 if key == "api_key" and value in (None, "***"):
                     continue
-                if value is not None and key in ("base_url", "api_key", "model", "temperature"):
+                if value is not None and key in (
+                    "base_url", "api_key", "model", "temperature", "reasoning_effort"
+                ):
                     setattr(candidate.cloud, key, value)
             for key, value in (ollama or {}).items():
-                if value is not None and key in ("base_url", "model", "temperature"):
+                if value is not None and key in (
+                    "base_url", "model", "temperature", "reasoning_effort"
+                ):
                     setattr(candidate.ollama, key, value)
             self._save_json("llm.json", candidate)
             self._config.llm = candidate

@@ -77,6 +77,7 @@ class Pipeline:
         memory_root=None,
         settings=None,
         job_manager=None,
+        dialect_settings=None,
     ):
         """初始化当前 Pipeline 实例的依赖，避免不同 Soul 共享类级状态。"""
         from ..config.settings import Settings
@@ -107,6 +108,7 @@ class Pipeline:
         soul_module._loader = soul_loader
         soul_module._messages = message_manager
         soul_module._builder = None
+        soul_module._dialect_settings = dialect_settings
 
         retrieve_module = by_type[MemoryRetrieveModule]
         retrieve_module._store = memory_store

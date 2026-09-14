@@ -12,6 +12,7 @@ from ..voice.service import VoiceUnavailable
 from ..voice.minimax import MiniMaxError
 from ..voice.openai_compatible import OpenAICompatibleTTSError
 from ..voice.text import text_for_speech
+from ..voice.dialect import DialectSettings
 from .dependencies import MAX_AUDIO_UPLOAD_BYTES, get_container
 from .schemas import (
     AudioRequest,
@@ -29,6 +30,14 @@ from .schemas import (
 
 router = APIRouter()
 log = get_logger("api.chat")
+
+
+def _dialect_config(container: ApplicationContainer):
+    settings = getattr(container, "dialect_settings", None)
+    if settings is None:
+        settings = DialectSettings(container.layout.voice_dir / "dialect.json")
+        setattr(container, "dialect_settings", settings)
+    return settings.load()
 
 
 @router.put(
@@ -166,7 +175,17 @@ async def chat_voice(
     if len(audio_bytes) > MAX_AUDIO_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="音频不能超过 25 MB")
     try:
-        text = await create_asr_service().transcribe(audio_bytes)
+        dialect = _dialect_config(container)
+        asr = create_asr_service()
+        asr_options = {
+            key: value
+            for key, value in {
+                "language_hint": dialect.asr_language_hint,
+                "initial_prompt": dialect.asr_initial_prompt,
+            }.items()
+            if value is not None
+        }
+        text = await asr.transcribe(audio_bytes, **asr_options)
     except Exception as exc:
         log.error("ASR 识别失败, error_type=%s", type(exc).__name__)
         raise HTTPException(status_code=500, detail="语音识别失败，请稍后重试") from exc
@@ -218,7 +237,11 @@ async def _chat_audio_response(body: AudioRequest, container: ApplicationContain
         raise HTTPException(status_code=400, detail="请先配置可用的语音服务")
     if hasattr(tts, "unavailable_reason"):
         raise HTTPException(status_code=503, detail=tts.unavailable_reason)
-    tts_config = TTSConfig(instruct_text=body.instruct_text)
+    dialect = _dialect_config(container)
+    tts_config = TTSConfig(
+        instruct_text=body.instruct_text,
+        dialect_instruct_text=dialect.tts_instruction,
+    )
     speech_text = text_for_speech(body.text)
     if not speech_text.strip():
         raise HTTPException(status_code=422, detail="待生成语音的文本不包含可朗读内容")
@@ -297,6 +320,8 @@ def _llm_http_error(exc: Exception, provider: str = "cloud") -> HTTPException:
         detail = "LLM API Key 无效（401），请检查设置中的 API Key 是否正确"
     elif "Connection" in reason or "connect" in reason or "Name or service not known" in reason:
         detail = "无法连接本地 Ollama，请确认服务正在运行并检查接口地址" if provider == "local" else "无法连接 LLM 服务，请检查 Base URL 地址和网络连接"
+    elif "仅返回推理内容" in reason or "未包含可展示文本" in reason:
+        detail = "模型未返回可展示回复；请在设置中关闭推理模式，或确认当前服务支持所选推理参数。"
     else:
         detail = "LLM 服务暂时不可用，请稍后重试"
     return HTTPException(status_code=502, detail=detail)

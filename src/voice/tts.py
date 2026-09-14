@@ -26,6 +26,12 @@ PEAK_NORM_LEVEL = 0.8
 TRAILING_SILENCE_S = 0.2
 
 
+def compose_instruct_text(dialect_instruct_text: str, instruct_text: str) -> str:
+    """Keep dialect delivery first while preserving the turn's prosody cue."""
+    parts = [part.strip() for part in (dialect_instruct_text, instruct_text) if part.strip()]
+    return f"You are a helpful assistant.{' '.join(parts)}"
+
+
 class TTSService:
     """本地 TTS 语音合成服务，基于 CosyVoice3 (MLX) 零样本声音克隆"""
 
@@ -212,7 +218,11 @@ class TTSService:
 
         def _run_generation():
             try:
-                audio_array = self._generate(text=text, instruct_text=cfg.instruct_text)
+                audio_array = self._generate(
+                    text=text,
+                    instruct_text=cfg.instruct_text,
+                    dialect_instruct_text=cfg.dialect_instruct_text,
+                )
                 chunk_queue.put(audio_array)
             except Exception as e:
                 chunk_queue.put(e)
@@ -264,7 +274,12 @@ class TTSService:
                  len(audio_bytes), duration_s, elapsed, elapsed / duration_s if duration_s > 0 else 0)
         yield audio_bytes
 
-    def _generate(self, text: str, instruct_text: str = "") -> np.ndarray:
+    def _generate(
+        self,
+        text: str,
+        instruct_text: str = "",
+        dialect_instruct_text: str = "",
+    ) -> np.ndarray:
         """同步生成音频：Instruct 模式 + 说话人嵌入驱动声音克隆。
         所有情感表达通过 LLM 生成的标点和语气词（…、~、！、呢、呀）驱动。
         """
@@ -302,7 +317,7 @@ class TTSService:
         # CosyVoice3 训练格式: "You are a helpful assistant.{指令}<|endofprompt|>{文本}"
         # "You are a helpful assistant." 是区分指令和文本的关键标记，不可省略
         # <|endofprompt|> 由 model.generate() 自动追加
-        full_instruct = f"You are a helpful assistant.{instruct_text}"
+        full_instruct = compose_instruct_text(dialect_instruct_text, instruct_text)
         log.debug("TTS instruct: %s", full_instruct)
 
         t_gen = time.monotonic()

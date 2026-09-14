@@ -1,10 +1,59 @@
 import json
 import time
 import httpx
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 from ..config.logger import get_logger
 
 log = get_logger("llm")
+
+
+class LLMEmptyResponseError(RuntimeError):
+    """The provider completed a request but sent no user-visible content."""
+
+
+def _stream_payload(line: str) -> dict[str, Any] | str | None:
+    """Decode standard SSE plus the newline-delimited JSON used by some gateways."""
+    line = line.strip()
+    if not line or line.startswith(":"):
+        return None
+    if line.startswith("data:"):
+        line = line[len("data:"):].lstrip()
+    if line == "[DONE]":
+        return "[DONE]"
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _content_from_stream_chunk(chunk: dict[str, Any]) -> tuple[str, bool]:
+    """Return visible text and whether a reasoning-only field was present."""
+    choices = chunk.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        choice = choices[0]
+        candidates = (choice.get("delta"), choice.get("message"), choice)
+    else:
+        candidates = (chunk.get("message"), chunk)
+
+    has_reasoning = False
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        has_reasoning = has_reasoning or bool(
+            candidate.get("reasoning_content") or candidate.get("reasoning")
+        )
+        content = candidate.get("content")
+        if isinstance(content, str) and content:
+            return content, has_reasoning
+        if isinstance(content, list):
+            text = "".join(
+                item.get("text", "") for item in content
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+            )
+            if text:
+                return text, has_reasoning
+    return "", has_reasoning
 
 
 def _log_messages_debug(messages: list[dict]):
@@ -21,12 +70,16 @@ class LLMClient:
     """OpenAI 兼容接口的 LLM 客户端，支持所有 OpenAI 兼容的 Provider"""
 
     def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 120,
-                 temperature: float | None = None):
+                 temperature: float | None = None,
+                 reasoning_effort: str | None = None,
+                 include_stream_usage: bool = False):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._model = model
         self._timeout = timeout
         self._temperature = temperature
+        self._reasoning_effort = reasoning_effort
+        self._include_stream_usage = include_stream_usage
         self._http = httpx.AsyncClient(timeout=timeout)
         log.info("LLMClient 初始化, base_url=%s, model=%s, timeout=%ds",
                  self._base_url, self._model, self._timeout)
@@ -34,6 +87,29 @@ class LLMClient:
     @property
     def model(self) -> str:
         return self._model
+
+    def _request_body(
+        self,
+        messages: list[dict],
+        *,
+        stream: bool = False,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"model": self._model, "messages": messages}
+        if stream:
+            body["stream"] = True
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        if self._temperature is not None:
+            body["temperature"] = self._temperature
+        if self._reasoning_effort is not None:
+            body["reasoning_effort"] = self._reasoning_effort
+        if stream and self._include_stream_usage:
+            body["stream_options"] = {"include_usage": True}
+        return body
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -50,16 +126,9 @@ class LLMClient:
         _log_messages_debug(messages)
         t0 = time.monotonic()
         try:
-            body = {
-                "model": self._model,
-                "messages": messages,
-            }
-            if max_tokens is not None:
-                body["max_tokens"] = max_tokens
-            if json_mode:
-                body["response_format"] = {"type": "json_object"}
-            if self._temperature is not None:
-                body["temperature"] = self._temperature
+            body = self._request_body(
+                messages, max_tokens=max_tokens, json_mode=json_mode
+            )
             response = await self._http.post(
                 url,
                 headers={
@@ -93,24 +162,17 @@ class LLMClient:
                      json_mode: bool = False) -> AsyncGenerator[str, None]:
         """流式聊天，逐 token 产出回复"""
         url = f"{self._base_url}/chat/completions"
-        total_tokens = 0
+        content_chunks = 0
+        content_chars = 0
         input_chars = sum(len(m["content"]) for m in messages)
         log.info("LLM stream 开始, model=%s, messages=%d, input_chars=%d, max_tokens=%s, json_mode=%s",
                  self._model, len(messages), input_chars, max_tokens or "default", json_mode)
         _log_messages_debug(messages)
         t0 = time.monotonic()
         try:
-            body = {
-                "model": self._model,
-                "messages": messages,
-                "stream": True,
-            }
-            if max_tokens is not None:
-                body["max_tokens"] = max_tokens
-            if json_mode:
-                body["response_format"] = {"type": "json_object"}
-            if self._temperature is not None:
-                body["temperature"] = self._temperature
+            body = self._request_body(
+                messages, stream=True, max_tokens=max_tokens, json_mode=json_mode
+            )
             async with self._http.stream(
                 "POST",
                 url,
@@ -121,24 +183,69 @@ class LLMClient:
                 json=body,
             ) as response:
                 response.raise_for_status()
-                log.debug("LLM stream 连接成功, status=%d", response.status_code)
+                log.debug(
+                    "LLM stream 响应头已收到, status=%d, elapsed=%.2fs",
+                    response.status_code, time.monotonic() - t0,
+                )
+                payload_count = 0
+                reasoning_chunks = 0
+                first_content_elapsed: float | None = None
+                usage: dict[str, Any] = {}
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line.removeprefix("data: ")
-                        if data_str == "[DONE]":
-                            elapsed = time.monotonic() - t0
-                            log.info("LLM stream 完成, 耗时=%.2fs, total_tokens=%d, tokens/s=%.1f",
-                                     elapsed, total_tokens, total_tokens / elapsed if elapsed > 0 else 0)
-                            return
-                        try:
-                            chunk = json.loads(data_str)
-                            delta = chunk["choices"][0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                total_tokens += 1
-                                yield content
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
+                    payload = _stream_payload(line)
+                    if payload is None:
+                        continue
+                    if payload == "[DONE]":
+                        break
+                    payload_count += 1
+                    if isinstance(payload.get("usage"), dict):
+                        usage = payload["usage"]
+                    content, has_reasoning = _content_from_stream_chunk(payload)
+                    reasoning_chunks += int(has_reasoning)
+                    if content:
+                        if first_content_elapsed is None:
+                            first_content_elapsed = time.monotonic() - t0
+                            log.info("LLM stream 首个内容, TTFT=%.2fs", first_content_elapsed)
+                        content_chunks += 1
+                        content_chars += len(content)
+                        yield content
+                elapsed = time.monotonic() - t0
+                decode_elapsed = elapsed - first_content_elapsed if first_content_elapsed else 0
+                log.info(
+                    "LLM stream 完成, 耗时=%.2fs, TTFT=%s, content_chunks=%d, "
+                    "content_chars=%d, decode_chunks/s=%.1f",
+                    elapsed,
+                    f"{first_content_elapsed:.2f}s" if first_content_elapsed is not None else "N/A",
+                    content_chunks,
+                    content_chars,
+                    content_chunks / decode_elapsed if decode_elapsed > 0 else 0,
+                )
+                if usage:
+                    prompt_tokens = usage.get("prompt_tokens")
+                    prefill_tokens_per_s = (
+                        prompt_tokens / first_content_elapsed
+                        if isinstance(prompt_tokens, (int, float))
+                        and first_content_elapsed is not None
+                        and first_content_elapsed > 0
+                        else None
+                    )
+                    log.info(
+                        "LLM stream usage, prompt_tokens=%s, completion_tokens=%s, total_tokens=%s, "
+                        "prefill_tokens/s=%s",
+                        prompt_tokens if prompt_tokens is not None else "N/A",
+                        usage.get("completion_tokens", "N/A"),
+                        usage.get("total_tokens", "N/A"),
+                        f"{prefill_tokens_per_s:.1f}" if prefill_tokens_per_s is not None else "N/A",
+                    )
+                if content_chunks == 0:
+                    if reasoning_chunks:
+                        raise LLMEmptyResponseError(
+                            "LLM 仅返回推理内容，未返回可展示回复；"
+                            "请关闭模型思考模式或升级 Ollama。"
+                        )
+                    raise LLMEmptyResponseError(
+                        f"LLM 流未包含可展示文本（已收到 {payload_count} 个数据块）。"
+                    )
         except Exception as e:
             elapsed = time.monotonic() - t0
             log.error("LLM stream 失败, 耗时=%.2fs, error=%s", elapsed, e)

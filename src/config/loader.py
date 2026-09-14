@@ -10,6 +10,8 @@ class LLMEndpointConfig:
     api_key: str = ""
     model: str = "gpt-4o"
     temperature: float = 0.7
+    # "default" preserves provider behaviour by omitting the request field.
+    reasoning_effort: Literal["default", "none", "low", "medium", "high"] = "default"
 
 
 @dataclass
@@ -17,6 +19,8 @@ class OllamaConfig:
     base_url: str = "http://127.0.0.1:11434/v1"
     model: str = ""
     temperature: float = 0.7
+    # Local chat defaults to direct answers, which is safer for reply JSON.
+    reasoning_effort: Literal["default", "none", "low", "medium", "high"] = "none"
 
 
 @dataclass(init=False)
@@ -52,6 +56,7 @@ class LLMConfig:
                 api_key="ollama",
                 model=self.ollama.model,
                 temperature=self.ollama.temperature,
+                reasoning_effort=self.ollama.reasoning_effort,
             )
         return self.cloud
 
@@ -166,11 +171,17 @@ class ConfigLoader:
                         api_key=cloud_data.get("api_key", config.llm.cloud.api_key),
                         model=cloud_data.get("model", config.llm.cloud.model),
                         temperature=cloud_data.get("temperature", config.llm.cloud.temperature),
+                        reasoning_effort=cloud_data.get(
+                            "reasoning_effort", config.llm.cloud.reasoning_effort
+                        ),
                     ),
                     ollama=OllamaConfig(
                         base_url=ollama_data.get("base_url", config.llm.ollama.base_url),
                         model=ollama_data.get("model", config.llm.ollama.model),
                         temperature=ollama_data.get("temperature", config.llm.ollama.temperature),
+                        reasoning_effort=ollama_data.get(
+                            "reasoning_effort", config.llm.ollama.reasoning_effort
+                        ),
                     ),
                 )
 

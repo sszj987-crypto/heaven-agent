@@ -19,6 +19,7 @@ from ..soul.loader import SoulLoader
 from ..voice.service import DisabledVoiceService
 from ..voice.minimax import MiniMaxTTSService
 from ..voice.openai_compatible import OpenAICompatibleTTSService
+from ..voice.dialect import DialectSettings
 from .candidates import CandidateService
 from .data_management import DataManagementService
 from .feedback import FeedbackStore
@@ -50,6 +51,7 @@ class ApplicationContainer:
     status_service: SystemStatusService
     data_management: DataManagementService
     voice_installation: VoiceInstallationService
+    dialect_settings: DialectSettings
     _retired_llms: list[Any] = field(default_factory=list, repr=False)
     _retired_voices: list[Any] = field(default_factory=list, repr=False)
     soul_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -88,6 +90,7 @@ class ApplicationContainer:
 
         voice_installed, _ = voice_dependencies_available(sys.platform, root)
         voice = _create_selected_voice(settings, layout.voice_dir, root, settings.soul_id)
+        dialect_settings = DialectSettings(layout.dialect_path)
         pipeline = Pipeline()
         agent_loop = AgentLoop(
             history_path=str(layout.conversation_path),
@@ -104,6 +107,7 @@ class ApplicationContainer:
             candidate_store=candidates,
             memory_root=layout.daily_dir,
             job_manager=jobs,
+            dialect_settings=dialect_settings,
         )
         distiller = SoulDistiller(llm, soul_loader, max_retries=settings.distill_max_retries)
         candidate_service = CandidateService(
@@ -149,6 +153,7 @@ class ApplicationContainer:
             status_service=status_service,
             data_management=data_management,
             voice_installation=voice_installation,
+            dialect_settings=dialect_settings,
         )
 
     async def replace_llm(self, replacement: Any | None = None) -> None:

@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  fetchVoiceStatus, fetchVoicePreview, localReferenceCandidateAudioUrl, markOnboardingStep,
+  fetchVoiceDialect, fetchVoiceStatus, fetchVoicePreview, localReferenceCandidateAudioUrl, markOnboardingStep,
   prepareLocalReferenceCandidates, selectLocalReferenceCandidate, uploadVoiceSample,
-  type LocalReferenceCandidate, type VoiceStatus,
+  updateVoiceDialect, type DialectId, type DialectSettings, type LocalReferenceCandidate, type VoiceStatus,
 } from "@/lib/api";
 import { pollVoiceCreation, voiceProviderPresentation } from "./voice-provider-state";
 import { cloudAudioFileError, createVoiceRecording, createVoicePreview } from "./voice-audio";
 
 export default function VoicePanel() {
   const [status, setStatus] = useState<VoiceStatus | null>(null);
+  const [dialect, setDialect] = useState<DialectSettings | null>(null);
   const [recording, setRecording] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -27,9 +28,9 @@ export default function VoicePanel() {
   const load = useCallback(async () => {
     const current = lifecycle.current;
     try {
-      const result = await fetchVoiceStatus();
+      const [result, dialectResult] = await Promise.all([fetchVoiceStatus(), fetchVoiceDialect()]);
       if (current !== lifecycle.current) return;
-      setStatus(result); setLoadError("");
+      setStatus(result); setDialect(dialectResult); setLoadError("");
       localStorage.setItem("voice_ready", String(result.ready));
     } catch (error) {
       if (current === lifecycle.current) setLoadError(error instanceof Error ? error.message : "无法读取声音状态");
@@ -131,6 +132,23 @@ export default function VoicePanel() {
     void previewRef.current.play();
   };
 
+  const selectDialect = async (dialectId: DialectId) => {
+    const current = lifecycle.current;
+    setMessage("");
+    try {
+      const next = await updateVoiceDialect({
+        enabled: dialectId === "cantonese",
+        dialect_id: dialectId,
+      });
+      if (current === lifecycle.current) {
+        setDialect(next);
+        setMessage(dialectId === "cantonese" ? "粤语模式已保存。" : "已切换为普通话模式。")
+      }
+    } catch (error) {
+      if (current === lifecycle.current) setMessage(error instanceof Error ? error.message : "方言模式保存失败");
+    }
+  };
+
   const view = status ? voiceProviderPresentation(status) : null;
   const busy = uploading || preparing || processing;
 
@@ -145,6 +163,28 @@ export default function VoicePanel() {
           <span className="min-w-0 flex-1 text-sm">{loadError || status?.message || "正在读取声音状态..."}</span>
           {loadError && <button type="button" onClick={() => void load()} className="text-xs text-white/60">重新读取</button>}
         </div>
+        <section className="space-y-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+          <div>
+            <h4 className="text-sm text-white/75">方言模式</h4>
+            <p className="mt-1 text-xs leading-5 text-white/40">这是人物固定偏好，会同时影响回复文字、语音合成和语音输入识别。</p>
+          </div>
+          <select
+            aria-label="方言模式"
+            value={dialect?.enabled ? dialect.dialect_id : "mandarin"}
+            disabled={!dialect || busy}
+            onChange={event => void selectDialect(event.target.value as DialectId)}
+            className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none disabled:opacity-40"
+          >
+            {(dialect?.dialects || []).map(option => (
+              <option key={option.id} value={option.id} className="bg-zinc-900">{option.label} · {option.description}</option>
+            ))}
+          </select>
+          {dialect && (
+            <p className={`text-xs leading-5 ${dialect.enabled && !dialect.supports_voice_delivery ? "text-amber-100/65" : "text-white/45"}`}>
+              {dialect.voice_delivery_message}
+            </p>
+          )}
+        </section>
         {view?.showUpload && (
           <>
             <p className="text-sm text-white/40 leading-relaxed">{status?.provider === "local" ? "上传或录制清晰语音后，试听并选择一段最像 TA 日常说话的 10 秒片段。" : "上传或录制 10–30 秒清晰语音样本。"} 声音克隆属于 AI 模拟，可能与本人存在差异。</p>

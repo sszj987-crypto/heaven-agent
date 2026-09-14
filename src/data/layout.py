@@ -29,6 +29,7 @@ class SoulDataLayout:
         self.soul_dir = self.data_root / "souls" / soul_id
         self.profile_dir = self.soul_dir / "profile"
         self.voice_dir = self.soul_dir / "voice"
+        self.dialect_path = self.voice_dir / "dialect.json"
         self.daily_dir = self.soul_dir / "memory" / "daily"
         self.memory_db_dir = self.soul_dir / "memory" / "index"
         self.conversation_path = self.soul_dir / "conversation.json"

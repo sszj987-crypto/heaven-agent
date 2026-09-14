@@ -109,6 +109,16 @@ class TestSettings:
         assert saved["provider"] == "local"
         assert saved["cloud"]["api_key"] == "sk-test123"
         assert saved["ollama"]["model"] == "qwen3:8b"
+        assert saved["ollama"]["reasoning_effort"] == "none"
+
+    def test_reasoning_effort_is_persisted_for_each_endpoint(self):
+        settings = Settings.init(self._config_dir)
+        settings.update_llm(cloud={"reasoning_effort": "low"})
+        settings.update_llm(provider="local", ollama={"reasoning_effort": "high"})
+
+        saved = json.loads((self._config_dir / "llm.json").read_text())
+        assert saved["cloud"]["reasoning_effort"] == "low"
+        assert saved["ollama"]["reasoning_effort"] == "high"
 
     def test_update_tts_keeps_secret_when_key_is_omitted(self):
         self._write_tts(api_key="existing")

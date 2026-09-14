@@ -5,10 +5,16 @@ import { fetchSettings, resetDemo, updateSettings, testLLMConnection, type Setti
 import { TTSSettingsSection } from "@/components/settings/TTSSettingsSection";
 
 type LLMProvider = "cloud" | "local";
+type ReasoningEffort = "default" | "none" | "low" | "medium" | "high";
+type LLMForm = {
+  provider: LLMProvider;
+  cloud: { base_url: string; model: string; temperature: number; api_key: string; reasoning_effort: ReasoningEffort };
+  ollama: { base_url: string; model: string; temperature: number; reasoning_effort: ReasoningEffort };
+};
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [llmForm, setLLMForm] = useState({ provider: "cloud" as LLMProvider, cloud: { base_url: "", model: "", temperature: 0.7, api_key: "" }, ollama: { base_url: "http://127.0.0.1:11434/v1", model: "", temperature: 0.7 } });
+  const [llmForm, setLLMForm] = useState<LLMForm>({ provider: "cloud", cloud: { base_url: "", model: "", temperature: 0.7, api_key: "", reasoning_effort: "default" }, ollama: { base_url: "http://127.0.0.1:11434/v1", model: "", temperature: 0.7, reasoning_effort: "none" } });
   const [llmKeyDirty, setLlmKeyDirty] = useState(false);
   const [logLevel, setLogLevel] = useState("error");
   const [testing, setTesting] = useState(false);
@@ -26,11 +32,25 @@ export default function SettingsPage() {
     setLogLevel(s.log_level || "error");
   }, []);
 
-  useEffect(() => { void load().catch(() => setMsg("无法加载配置，请确认后端服务已启动")); }, [load]);
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(async () => {
+      try { await load(); }
+      catch { if (active) setMsg("无法加载配置，请确认后端服务已启动"); }
+    });
+    return () => { active = false; };
+  }, [load]);
 
   const selected = llmForm.provider === "local" ? llmForm.ollama : llmForm.cloud;
   const updateSelected = (key: "base_url" | "model" | "temperature", value: string | number) => {
     setLLMForm((current) => current.provider === "local" ? { ...current, ollama: { ...current.ollama, [key]: value } } : { ...current, cloud: { ...current.cloud, [key]: value } });
+    setTestResult(null);
+  };
+
+  const updateReasoningEffort = (reasoning_effort: ReasoningEffort) => {
+    setLLMForm((current) => current.provider === "local"
+      ? { ...current, ollama: { ...current.ollama, reasoning_effort } }
+      : { ...current, cloud: { ...current.cloud, reasoning_effort } });
     setTestResult(null);
   };
 
@@ -78,6 +98,7 @@ export default function SettingsPage() {
         {llmForm.provider === "cloud" && <label className="block"><span className="text-sm text-stone-300">云端渠道</span><select value="openai_compatible" disabled className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"><option value="openai_compatible">OpenAI 兼容</option></select></label>}
         <p className="text-sm leading-6 text-stone-400">{llmForm.provider === "local" ? "使用本机运行的 Ollama。请先启动 Ollama 并拉取所需模型。" : "使用任意 OpenAI 兼容的云端对话服务。"}</p>
         <label className="block"><span className="text-sm text-stone-300">回复随机性 · {selected.temperature.toFixed(1)}</span><input type="range" min="0" max="2" step="0.1" value={selected.temperature} disabled={saving} onChange={(e) => updateSelected("temperature", Number(e.target.value))} className="w-full mt-2 accent-amber-300/70" /><span className="block text-xs leading-5 text-stone-400">数值越高，表达变化通常越大。</span></label>
+        <label className="block"><span className="text-sm text-stone-300">推理模式</span><select value={selected.reasoning_effort} disabled={saving} onChange={(e) => updateReasoningEffort(e.target.value as "default" | "none" | "low" | "medium" | "high")} className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none"><option value="none">关闭（推荐用于人物聊天）</option><option value="default">模型默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select><span className="block mt-1 text-xs leading-5 text-stone-400">“默认”不会发送推理参数；其他选项仅在所选服务支持时透传。关闭可避免思考内容占满人物回复。</span></label>
         <label className="block"><span className="text-sm text-stone-300">对话模型名称</span><input value={selected.model} disabled={saving} onChange={(e) => updateSelected("model", e.target.value)} className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white/30" /></label>
         {llmForm.provider === "cloud" && <label className="block"><span className="text-sm text-stone-300">对话服务密钥 <span className="text-xs text-stone-400">· {settings.llm.cloud.api_key_configured ? "已配置，留空保持不变" : "尚未配置"}</span></span><input type="password" value={llmForm.cloud.api_key} disabled={saving} onChange={(e) => { setLlmKeyDirty(true); setLLMForm((f) => ({ ...f, cloud: { ...f.cloud, api_key: e.target.value } })); setTestResult(null); }} className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white/30" /></label>}
         <details className="rounded-lg border border-white/10 px-4 py-3"><summary className="cursor-pointer text-sm text-stone-300 hover:text-stone-100">高级配置</summary><label className="block mt-4"><span className="text-sm text-stone-300">接口地址</span><input value={selected.base_url} disabled={saving} onChange={(e) => updateSelected("base_url", e.target.value)} className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white/30" /></label></details>

@@ -19,14 +19,53 @@ from .schemas import (
     SettingsView,
     StatusView,
     TTSConnectionView,
+    DialectSettingsUpdate,
+    DialectSettingsView,
     VoiceUploadView,
     VoiceStatusView,
 )
 from ..voice.reference_selection import LocalReferenceSelection
+from ..voice.dialect import (
+    DialectConfig,
+    DialectSettings,
+    available_dialects,
+    voice_supports_dialect_delivery,
+)
 
 
 router = APIRouter()
 log = get_logger("api.settings")
+
+
+def _dialect_settings(container: ApplicationContainer) -> DialectSettings:
+    """Keep the API usable with older test and integration containers."""
+    settings = getattr(container, "dialect_settings", None)
+    if settings is None:
+        settings = DialectSettings(container.layout.voice_dir / "dialect.json")
+        setattr(container, "dialect_settings", settings)
+    return settings
+
+
+def _dialect_view(container: ApplicationContainer, config: DialectConfig) -> dict:
+    supports_delivery = voice_supports_dialect_delivery(
+        container.voice, container.settings.tts.provider
+    )
+    if config.enabled and config.dialect_id == "cantonese" and not supports_delivery:
+        delivery_message = "文字将使用粤语；当前语音服务无法保证粤语口音。"
+    elif config.enabled and config.dialect_id == "cantonese":
+        delivery_message = "当前本地 CosyVoice 将使用自然粤语口音合成。"
+    else:
+        delivery_message = "当前使用默认普通话模式。"
+    return {
+        "enabled": config.enabled,
+        "dialect_id": config.dialect_id,
+        "supports_voice_delivery": supports_delivery,
+        "voice_delivery_message": delivery_message,
+        "dialects": [
+            {"id": item.id, "label": item.label, "description": item.description}
+            for item in available_dialects()
+        ],
+    }
 
 
 @router.get("/settings", response_model=SettingsView)
@@ -40,11 +79,13 @@ async def get_settings(container: ApplicationContainer = Depends(get_container))
                 "model": settings.llm.cloud.model,
                 "temperature": settings.llm.cloud.temperature,
                 "api_key_configured": bool(settings.llm.cloud.api_key),
+                "reasoning_effort": settings.llm.cloud.reasoning_effort,
             },
             "ollama": {
                 "base_url": settings.llm.ollama.base_url,
                 "model": settings.llm.ollama.model,
                 "temperature": settings.llm.ollama.temperature,
+                "reasoning_effort": settings.llm.ollama.reasoning_effort,
             },
         },
         "tts": {
@@ -76,7 +117,7 @@ async def update_settings(
     if body.llm is not None:
         llm_update = body.llm.model_dump(exclude_unset=True)
         cloud_update = {
-            **{key: value for key, value in llm_update.items() if key in ("base_url", "api_key", "model", "temperature")},
+                    **{key: value for key, value in llm_update.items() if key in ("base_url", "api_key", "model", "temperature", "reasoning_effort")},
             **(llm_update.get("cloud") or {}),
         }
         candidate_config = deepcopy(settings.llm)
@@ -176,6 +217,29 @@ async def update_settings(
     if body.log_level is not None:
         settings.update_log_level(body.log_level)
     return {"status": "ok"}
+
+
+@router.get("/settings/voice/dialect", response_model=DialectSettingsView)
+async def get_voice_dialect(container: ApplicationContainer = Depends(get_container)):
+    return _dialect_view(container, _dialect_settings(container).load())
+
+
+@router.put("/settings/voice/dialect", response_model=DialectSettingsView)
+async def update_voice_dialect(
+    body: DialectSettingsUpdate,
+    container: ApplicationContainer = Depends(get_container),
+):
+    try:
+        async with container.soul_lock:
+            config = _dialect_settings(container).save(
+                DialectConfig(enabled=body.enabled, dialect_id=body.dialect_id)
+            )
+            invalidate = getattr(container.agent_loop, "invalidate_soul_cache", None)
+            if callable(invalidate):
+                invalidate()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _dialect_view(container, config)
 
 
 @router.post("/settings/voice/upload", response_model=VoiceUploadView)

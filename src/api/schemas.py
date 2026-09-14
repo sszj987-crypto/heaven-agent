@@ -80,12 +80,14 @@ class CloudLLMSettingsView(APIModel):
     model: str
     temperature: float | None = None
     api_key_configured: bool
+    reasoning_effort: Literal["default", "none", "low", "medium", "high"] = "default"
 
 
 class OllamaSettingsView(APIModel):
     base_url: str
     model: str
     temperature: float | None = None
+    reasoning_effort: Literal["default", "none", "low", "medium", "high"] = "none"
 
 
 class LLMSettingsView(APIModel):
@@ -126,12 +128,14 @@ class CloudLLMSettingsUpdate(APIModel):
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     api_key: str | None = None
+    reasoning_effort: Literal["default", "none", "low", "medium", "high"] | None = None
 
 
 class OllamaSettingsUpdate(APIModel):
     base_url: str | None = None
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
+    reasoning_effort: Literal["default", "none", "low", "medium", "high"] | None = None
 
 
 class LLMSettingsUpdate(APIModel):
@@ -334,6 +338,25 @@ class VoiceStatusView(APIModel):
         "not_installed", "not_configured", "no_voice", "creating", "ready", "failed"
     ]
     message: str
+
+
+class DialectOptionView(APIModel):
+    id: str
+    label: str
+    description: str
+
+
+class DialectSettingsView(APIModel):
+    enabled: bool
+    dialect_id: Literal["mandarin", "cantonese"]
+    supports_voice_delivery: bool
+    voice_delivery_message: str
+    dialects: list[DialectOptionView]
+
+
+class DialectSettingsUpdate(APIModel):
+    enabled: bool
+    dialect_id: Literal["mandarin", "cantonese"]
 
 
 class LLMConnectionView(APIModel):

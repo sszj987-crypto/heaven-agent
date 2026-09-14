@@ -68,13 +68,14 @@ class TestConfigLoader:
             (Path(tmp) / "llm.json").write_text(json.dumps({
                 "provider": "local",
                 "cloud": {"base_url": "https://cloud.example/v1", "api_key": "secret", "model": "cloud-model"},
-                "ollama": {"base_url": "http://localhost:11434/v1", "model": "qwen3:8b", "temperature": 0.2},
+                "ollama": {"base_url": "http://localhost:11434/v1", "model": "qwen3:8b", "temperature": 0.2, "reasoning_effort": "low"},
             }))
             config = ConfigLoader(Path(tmp)).load()
 
             assert config.llm.provider == "local"
             assert config.llm.cloud.model == "cloud-model"
             assert config.llm.ollama.model == "qwen3:8b"
+            assert config.llm.ollama.reasoning_effort == "low"
             assert config.llm.active.api_key == "ollama"
 
     def test_tts_defaults_to_local_minimax_hd(self):
