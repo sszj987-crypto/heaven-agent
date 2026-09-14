@@ -40,6 +40,17 @@ open 'dist/Heaven Agent.app'
 
 当前构建产物仅适用于与构建机器相同的 macOS 架构（Apple Silicon 或 Intel）。发布给两种架构前，应分别构建，或后续制作 universal 包。
 
+## Windows EXE（原生窗口）
+
+Windows 版与 macOS 版使用同一个原生窗口入口，双击 `Heaven Agent.exe` 后直接打开应用窗口，不会启动浏览器。请在 Windows 10/11 x64 的项目根目录执行：
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e ".[desktop]"
+.venv\Scripts\python.exe scripts\build_windows_exe.py
+```
+
+产物在 `dist\windows\Heaven Agent\Heaven Agent.exe`；该目录需整体分发。用户数据保存于 `%LOCALAPPDATA%\Heaven Agent\`。目标电脑需要 Microsoft Edge WebView2 Runtime（多数 Windows 10/11 已自带）及 .NET Framework 4.6.2+；缺失时请先通过微软官方安装程序安装。应用会强制使用 WebView2，不会回退到已弃用的 Internet Explorer 渲染引擎。若需要桌面快捷方式和卸载入口，可在安装 Inno Setup 后编译 `scripts\windows-installer.iss`。
+
 启动脚本会检查 Python/Node，创建或修复 `.venv`，从 `pyproject.toml` 安装核心依赖并执行 `npm ci`。打开 <http://localhost:3326>，按四步引导完成“人物信息 → 导入确认 → 声音 → 对话”。首次建档会使用脱敏 demo 模板，不要求仓库中存在个人资料。
 
 如果只想准备环境：

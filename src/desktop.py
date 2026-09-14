@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import socket
+import platform
 import sys
 import threading
 import time
@@ -25,9 +26,21 @@ def bundled_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def user_data_root(home: Path | None = None) -> Path:
-    """Keep mutable configuration out of a signed, read-only .app bundle."""
-    return (home or Path.home()) / "Library" / "Application Support" / APP_NAME
+def user_data_root(
+    home: Path | None = None,
+    *,
+    system: str | None = None,
+    local_app_data: str | None = None,
+) -> Path:
+    """Keep mutable configuration out of a signed desktop application bundle."""
+    current_system = system or platform.system()
+    if current_system == "Windows":
+        if local_app_data:
+            return Path(local_app_data) / APP_NAME
+        return (home or Path.home()) / "AppData" / "Local" / APP_NAME
+    if current_system == "Darwin":
+        return (home or Path.home()) / "Library" / "Application Support" / APP_NAME
+    return (home or Path.home()) / ".local" / "share" / APP_NAME
 
 
 def seed_runtime_files(source_root: Path, destination_root: Path) -> None:
@@ -70,8 +83,10 @@ def find_available_port(host: str = HOST) -> int:
         return int(candidate.getsockname()[1])
 
 
-def show_native_window(webview_module: Any, url: str) -> None:
-    """Run the macOS WebKit window loop on the application's main thread."""
+def show_native_window(
+    webview_module: Any, url: str, *, system: str | None = None
+) -> None:
+    """Run the native WebView loop on the application's main thread."""
     webview_module.create_window(
         APP_NAME,
         url,
@@ -80,7 +95,11 @@ def show_native_window(webview_module: Any, url: str) -> None:
         min_size=(960, 640),
         background_color="#1c1917",
     )
-    webview_module.start(private_mode=True)
+    start_options: dict[str, object] = {"private_mode": True}
+    if (system or platform.system()) == "Windows":
+        # Never silently fall back to the deprecated MSHTML / Internet Explorer engine.
+        start_options["gui"] = "edgechromium"
+    webview_module.start(**start_options)
 
 
 def run() -> None:
@@ -101,7 +120,7 @@ def run() -> None:
     thread = threading.Thread(target=server.run, name="heaven-agent-api", daemon=True)
     thread.start()
     if not wait_for_port(HOST, port):
-        raise RuntimeError("Heaven Agent 启动超时，请查看 ~/Library/Application Support/Heaven Agent/log")
+        raise RuntimeError(f"Heaven Agent 启动超时，请查看 {runtime_root / 'log'}")
     try:
         show_native_window(webview, f"http://{HOST}:{port}/")
     finally:

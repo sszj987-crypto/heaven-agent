@@ -9,6 +9,12 @@ def test_user_data_root_uses_macos_application_support(tmp_path):
     )
 
 
+def test_user_data_root_uses_windows_local_app_data(tmp_path):
+    assert user_data_root(
+        system="Windows", local_app_data=str(tmp_path / "LocalAppData")
+    ) == (tmp_path / "LocalAppData" / "Heaven Agent")
+
+
 def test_seed_runtime_files_preserves_existing_user_configuration(tmp_path):
     bundled = tmp_path / "bundle"
     (bundled / "config" / "souls" / "demo").mkdir(parents=True)
@@ -65,3 +71,17 @@ def test_native_window_uses_the_local_app_url():
         {"width": 1280, "height": 820, "min_size": (960, 640), "background_color": "#1c1917"},
     )
     assert webview.started == {"private_mode": True}
+
+
+def test_native_window_requires_edge_chromium_on_windows():
+    class FakeWebview:
+        def create_window(self, *_args, **_kwargs):
+            pass
+
+        def start(self, **kwargs):
+            self.started = kwargs
+
+    webview = FakeWebview()
+    show_native_window(webview, "http://127.0.0.1:43123/", system="Windows")
+
+    assert webview.started == {"private_mode": True, "gui": "edgechromium"}
