@@ -24,6 +24,7 @@ from src.api.schemas import (
 from src.api.settings_routes import update_settings, upload_voice_sample
 from src.config.loader import LLMConfig, MiniMaxConfig, VoiceProviderConfig
 from src.main import create_app
+from src.observability import current_request_id
 from src.services.jobs import JobManager
 from src.services.feedback import FeedbackStore
 from src.services.voice_installation import (
@@ -302,6 +303,26 @@ def test_chat_response_includes_memory_provenance():
     assert response.json()["timing"]["first_response_ms"] is None
     assert isinstance(response.json()["timing"]["total_response_ms"], int)
     assert response.json()["timing"]["total_response_ms"] >= 0
+
+
+def test_chat_propagates_http_request_id_to_agent_context():
+    class RequestAwareAgent(FakeAgent):
+        async def run_once(self, message):
+            self.observed_request_id = current_request_id()
+            return await super().run_once(message)
+
+    client, container = make_client()
+    container.agent_loop = RequestAwareAgent()
+    with client:
+        response = client.post(
+            "/chat",
+            json={"message": "还记得吗"},
+            headers={"x-request-id": "trace-request-123"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "trace-request-123"
+    assert container.agent_loop.observed_request_id == "trace-request-123"
 
 
 def test_chat_stream_response_includes_response_id():

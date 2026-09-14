@@ -19,6 +19,7 @@ from src.config.logger import init_logger
 from src.api.routes import router
 from src.api.schemas import ErrorBody
 from src.services.container import ApplicationContainer
+from src.observability import bind_request_id, reset_request_id
 from src.voice.minimax import MiniMaxError
 from src.voice.openai_compatible import OpenAICompatibleTTSError
 
@@ -65,12 +66,16 @@ def create_app(
     async def request_context(request: Request, call_next):
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
         request.state.request_id = request_id
+        request_id_token = bind_request_id(request_id)
         started = time.monotonic()
-        response = await call_next(request)
-        elapsed_ms = (time.monotonic() - started) * 1000
-        response.headers["x-request-id"] = request_id
-        response.headers["x-process-time-ms"] = f"{elapsed_ms:.1f}"
-        return response
+        try:
+            response = await call_next(request)
+            elapsed_ms = (time.monotonic() - started) * 1000
+            response.headers["x-request-id"] = request_id
+            response.headers["x-process-time-ms"] = f"{elapsed_ms:.1f}"
+            return response
+        finally:
+            reset_request_id(request_id_token)
 
     @application.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):

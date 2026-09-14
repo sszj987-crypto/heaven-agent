@@ -1,6 +1,7 @@
 import json
 import asyncio
 import time
+import uuid
 from pathlib import Path
 from typing import AsyncGenerator
 from .pipeline import Pipeline
@@ -10,6 +11,7 @@ from .modules import prellm as _prellm
 from .modules import postllm as _postllm
 from .modules import postoutput as _postoutput
 from ..config.logger import get_logger
+from ..observability import current_request_id, get_agent_tracer, start_agent_span
 
 log = get_logger("agent")
 
@@ -81,9 +83,8 @@ def _parse_llm_response(raw: str) -> tuple[str, str]:
     """
     text = raw.strip()
 
-    # 诊断日志：用 repr 显示不可见字符
     if text:
-        log.debug("LLM 响应 (repr): %s", repr(text[:500]))
+        log.debug("LLM 响应已接收, stripped_len=%d", len(text))
     else:
         log.warning("LLM 响应 strip 后为空, raw_len=%d", len(raw))
 
@@ -98,11 +99,11 @@ def _parse_llm_response(raw: str) -> tuple[str, str]:
                 break
         if end_idx is not None:
             text = "\n".join(lines[1:end_idx]).strip()
-            log.debug("去除 markdown 代码块后: %s", repr(text[:300]))
+            log.debug("已去除 markdown 代码块, stripped_len=%d", len(text))
         elif len(lines) > 1:
             # 只有开头 ``` 没有结尾 ```，尝试去掉第一行
             text = "\n".join(lines[1:]).strip()
-            log.debug("去除开头 ``` 后: %s", repr(text[:300]))
+            log.debug("已去除 markdown 代码块开头, stripped_len=%d", len(text))
 
     # 尝试解析 JSON
     try:
@@ -110,7 +111,7 @@ def _parse_llm_response(raw: str) -> tuple[str, str]:
         reply = str(data.get("reply", "")).strip()
         instruct = str(data.get("instruct", _DEFAULT_INSTRUCT)).strip()
         if reply:
-            log.debug("JSON 解析成功: reply=%d chars, instruct=%s", len(reply), instruct)
+            log.debug("JSON 解析成功: reply_len=%d, instruct_len=%d", len(reply), len(instruct))
             return reply, instruct or _DEFAULT_INSTRUCT
         else:
             log.warning("JSON 中 reply 为空, response_len=%d", len(text))
@@ -132,6 +133,7 @@ class AgentLoop:
         max_conversation_turns: int | None = None,
         max_regenerate: int | None = None,
         safety_policy=None,
+        tracer=None,
     ):
         if llm is None or max_conversation_turns is None or max_regenerate is None:
             from ..config.settings import Settings
@@ -152,6 +154,7 @@ class AgentLoop:
             from ..services.safety import SafetyPolicy
             safety_policy = SafetyPolicy()
         self._safety_policy = safety_policy
+        self._tracer = tracer or get_agent_tracer()
 
         if history_path:
             loaded = self._messages.load_from_file(history_path)
@@ -177,38 +180,135 @@ class AgentLoop:
         A Soul owns one ordered conversation, so concurrent requests are
         serialized to prevent history and persistence from interleaving.
         """
+        completed_context = None
         async with self._turn_lock:
             async for event in self._stream_unlocked(user_message):
                 if event["type"] == "done":
-                    return event["context"]
-        raise RuntimeError("对话未返回结果")
+                    completed_context = event["context"]
+        if completed_context is None:
+            raise RuntimeError("对话未返回结果")
+        return completed_context
 
     async def stream_once(self, user_message: str) -> AsyncGenerator[dict, None]:
         """Run one turn and yield visible reply deltas followed by its context."""
         async with self._turn_lock:
-            async for event in self._stream_unlocked(user_message):
-                yield event
+            stream = self._stream_unlocked(user_message)
+            try:
+                async for event in stream:
+                    yield event
+            finally:
+                await stream.aclose()
 
     async def _stream_unlocked(self, user_message: str) -> AsyncGenerator[dict, None]:
+        attributes = {
+            "gen_ai.operation.name": "invoke_agent",
+            "heaven.agent.input_chars": len(user_message),
+            "heaven.agent.history_turns": self._messages.conversation_turns,
+        }
+        request_id = current_request_id()
+        turn_id = request_id or uuid.uuid4().hex[:16]
+        if request_id:
+            attributes["heaven.request.id"] = request_id
+        attributes["heaven.agent.turn_id"] = turn_id
+
+        turn_started = time.monotonic()
+        outcome = "closed"
+        log.debug(
+            "agent_trace turn_id=%s stage=turn event=start input_chars=%d history_turns=%d",
+            turn_id,
+            len(user_message),
+            self._messages.conversation_turns,
+        )
+        with start_agent_span(
+            self._tracer,
+            "heaven.agent.turn",
+            attributes=attributes,
+        ) as turn_span:
+            turn = self._run_turn(user_message, turn_span, turn_id)
+            try:
+                async for event in turn:
+                    yield event
+                outcome = "completed"
+            except Exception as exc:
+                outcome = "error"
+                log.debug(
+                    "agent_trace turn_id=%s stage=turn event=error error_type=%s",
+                    turn_id,
+                    type(exc).__name__,
+                )
+                raise
+            finally:
+                await turn.aclose()
+                log.debug(
+                    "agent_trace turn_id=%s stage=turn event=end outcome=%s duration_ms=%.1f",
+                    turn_id,
+                    outcome,
+                    (time.monotonic() - turn_started) * 1000,
+                )
+
+    async def _run_turn(
+        self,
+        user_message: str,
+        turn_span,
+        turn_id: str,
+    ) -> AsyncGenerator[dict, None]:
         t_start = time.monotonic()
-        log.info("══════ AgentLoop.run 开始, user_message=%s ══════", user_message[:60])
+        log.info("══════ AgentLoop.run 开始, input_chars=%d ══════", len(user_message))
         ctx = PipelineContext(user_message=user_message)
-        safety = self._safety_policy.evaluate(user_message)
+        stage_started = time.monotonic()
+        with start_agent_span(
+            self._tracer,
+            "heaven.agent.safety",
+            parent=turn_span,
+        ) as safety_span:
+            safety = self._safety_policy.evaluate(user_message)
+            safety_span.set_attribute("heaven.safety.state", safety.state)
+        log.debug(
+            "agent_trace turn_id=%s stage=safety duration_ms=%.1f state=%s",
+            turn_id,
+            (time.monotonic() - stage_started) * 1000,
+            safety.state,
+        )
         ctx.safety_state = safety.state
+        turn_span.set_attribute("heaven.safety.state", safety.state)
         if safety.state == "crisis" and safety.response:
             ctx.response = safety.response
             ctx.instruct_text = _DEFAULT_INSTRUCT
-            self._messages.add("user", user_message)
-            self._messages.add("assistant", ctx.response)
-            if self._history_path:
-                self._messages.save_to_file(self._history_path)
+            with start_agent_span(
+                self._tracer,
+                "heaven.agent.history.persist",
+                parent=turn_span,
+            ) as history_span:
+                self._messages.add("user", user_message)
+                self._messages.add("assistant", ctx.response)
+                if self._history_path:
+                    self._messages.save_to_file(self._history_path)
+                history_span.set_attribute(
+                    "heaven.agent.history_turns", self._messages.conversation_turns
+                )
+            turn_span.set_attribute("heaven.agent.output_chars", len(ctx.response))
+            turn_span.set_attribute("heaven.agent.regeneration_count", 0)
+            log.debug(
+                "agent_trace turn_id=%s stage=history_persist history_turns=%d",
+                turn_id,
+                self._messages.conversation_turns,
+            )
             log.warning("高风险输入触发现实支持回应，跳过角色化模型")
             yield {"type": "done", "context": ctx}
             return
 
         # ── PreLLM ──
         t_prellm = time.monotonic()
-        ctx = await self._pipeline.run_prellm(ctx)
+        with start_agent_span(
+            self._tracer,
+            "heaven.agent.prellm",
+            parent=turn_span,
+        ) as prellm_span:
+            ctx = await self._pipeline.run_prellm(ctx)
+            prellm_span.set_attribute("heaven.agent.llm_message_count", len(ctx.llm_messages))
+            prellm_span.set_attribute(
+                "heaven.agent.retrieved_memory_count", len(ctx.retrieved_memories)
+            )
         if safety.state == "supportive_redirect":
             ctx.llm_messages.append({
                 "role": "system",
@@ -217,7 +317,13 @@ class AgentLoop:
                     "鼓励用户联系现实中信任的人，并说明 AI 不能替代专业支持。"
                 ),
             })
-        log.debug("PreLLM 耗时=%.2fs", time.monotonic() - t_prellm)
+        log.debug(
+            "agent_trace turn_id=%s stage=prellm duration_ms=%.1f llm_messages=%d memories=%d",
+            turn_id,
+            (time.monotonic() - t_prellm) * 1000,
+            len(ctx.llm_messages),
+            len(ctx.retrieved_memories),
+        )
 
         # ── LLM（可能触发重生成）──
         for attempt in range(self._max_regenerate + 1):
@@ -230,42 +336,125 @@ class AgentLoop:
             if attempt:
                 yield {"type": "reset"}
             t_llm = time.monotonic()
-            async for chunk in self._llm.stream(ctx.llm_messages):
-                ctx.response += chunk
-                reply_chunk = decoder.feed(chunk)
-                if reply_chunk:
-                    yield {"type": "delta", "content": reply_chunk}
-            log.debug("LLM 流式耗时=%.2fs", time.monotonic() - t_llm)
-            log.debug("LLM 原始响应已接收, len=%d", len(ctx.response))
+            model_name = getattr(self._llm, "model", None)
+            generation_attributes = {
+                "gen_ai.operation.name": "chat",
+                "heaven.agent.generation_attempt": attempt + 1,
+                "heaven.agent.llm_message_count": len(ctx.llm_messages),
+            }
+            if isinstance(model_name, str) and model_name:
+                generation_attributes["gen_ai.request.model"] = model_name
+            with start_agent_span(
+                self._tracer,
+                "heaven.agent.llm.generate",
+                parent=turn_span,
+                attributes=generation_attributes,
+            ) as generation_span:
+                async for chunk in self._llm.stream(ctx.llm_messages):
+                    ctx.response += chunk
+                    reply_chunk = decoder.feed(chunk)
+                    if reply_chunk:
+                        yield {"type": "delta", "content": reply_chunk}
+                generation_span.set_attribute(
+                    "heaven.agent.raw_output_chars", len(ctx.response)
+                )
+            log.debug(
+                "agent_trace turn_id=%s stage=llm_generate duration_ms=%.1f attempt=%d raw_output_chars=%d model=%s",
+                turn_id,
+                (time.monotonic() - t_llm) * 1000,
+                attempt + 1,
+                len(ctx.response),
+                model_name or "unknown",
+            )
 
             # 解析 LLM 响应：分离回复文本和语音语气
-            reply, instruct = _parse_llm_response(ctx.response)
-            ctx.response = reply
-            ctx.instruct_text = instruct
-            log.debug("解析后 reply (%d chars): %s", len(reply), reply[:300])
-            log.debug("解析后 instruct: %s", instruct)
+            with start_agent_span(
+                self._tracer,
+                "heaven.agent.output.parse",
+                parent=turn_span,
+            ) as parse_span:
+                reply, instruct = _parse_llm_response(ctx.response)
+                ctx.response = reply
+                ctx.instruct_text = instruct
+                parse_span.set_attribute("heaven.agent.output_chars", len(reply))
+                parse_span.set_attribute("heaven.agent.instruct_chars", len(instruct))
+            log.debug(
+                "agent_trace turn_id=%s stage=output_parse output_chars=%d instruct_chars=%d",
+                turn_id,
+                len(reply),
+                len(instruct),
+            )
 
-            ctx = await self._pipeline.run_postllm(ctx)
+            stage_started = time.monotonic()
+            with start_agent_span(
+                self._tracer,
+                "heaven.agent.postllm",
+                parent=turn_span,
+            ) as postllm_span:
+                ctx = await self._pipeline.run_postllm(ctx)
+                postllm_span.set_attribute(
+                    "heaven.agent.needs_regeneration", ctx.need_regenerate
+                )
+            log.debug(
+                "agent_trace turn_id=%s stage=postllm duration_ms=%.1f regenerate=%s",
+                turn_id,
+                (time.monotonic() - stage_started) * 1000,
+                ctx.need_regenerate,
+            )
 
             if not ctx.need_regenerate:
                 break
 
         # ── 记录对话历史 ──
-        self._messages.add("user", user_message)
-        self._messages.add("assistant", ctx.response)
+        stage_started = time.monotonic()
+        with start_agent_span(
+            self._tracer,
+            "heaven.agent.history.persist",
+            parent=turn_span,
+        ) as history_span:
+            self._messages.add("user", user_message)
+            self._messages.add("assistant", ctx.response)
+            if self._history_path:
+                self._messages.save_to_file(self._history_path)
+            history_span.set_attribute(
+                "heaven.agent.history_turns", self._messages.conversation_turns
+            )
+            history_span.set_attribute(
+                "heaven.agent.history_message_count", len(self._messages.get_all())
+            )
         log.debug("对话历史更新, 轮数=%d, 总消息=%d, 对话字符=%d",
                   self._messages.conversation_turns, len(self._messages.get_all()),
                   self._messages.conversation_chars)
-
-        if self._history_path:
-            self._messages.save_to_file(self._history_path)
+        log.debug(
+            "agent_trace turn_id=%s stage=history_persist duration_ms=%.1f history_turns=%d history_messages=%d",
+            turn_id,
+            (time.monotonic() - stage_started) * 1000,
+            self._messages.conversation_turns,
+            len(self._messages.get_all()),
+        )
 
         # ── PostOutput ──
-        ctx = await self._pipeline.run_postoutput(ctx)
+        stage_started = time.monotonic()
+        with start_agent_span(
+            self._tracer,
+            "heaven.agent.postoutput",
+            parent=turn_span,
+        ) as postoutput_span:
+            ctx = await self._pipeline.run_postoutput(ctx)
+            postoutput_span.set_attribute("heaven.agent.output_chars", len(ctx.response))
+        log.debug(
+            "agent_trace turn_id=%s stage=postoutput duration_ms=%.1f output_chars=%d",
+            turn_id,
+            (time.monotonic() - stage_started) * 1000,
+            len(ctx.response),
+        )
 
         total_elapsed = time.monotonic() - t_start
-        log.info("══════ AgentLoop.run 完成, 总耗时=%.2fs, reply_len=%d, instruct=%s, turns=%d ══════",
-                 total_elapsed, len(ctx.response), ctx.instruct_text, self._messages.conversation_turns)
+        turn_span.set_attribute("heaven.agent.output_chars", len(ctx.response))
+        turn_span.set_attribute("heaven.agent.regeneration_count", attempt)
+        turn_span.set_attribute("heaven.agent.duration_ms", total_elapsed * 1000)
+        log.info("══════ AgentLoop.run 完成, 总耗时=%.2fs, reply_len=%d, instruct_len=%d, turns=%d ══════",
+                 total_elapsed, len(ctx.response), len(ctx.instruct_text), self._messages.conversation_turns)
 
         yield {"type": "done", "context": ctx}
 
