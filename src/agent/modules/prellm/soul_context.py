@@ -47,6 +47,7 @@ class SoulContextModule(PipelineModule):
             skill_card,
             memories,
             dialect.text_instruction if dialect is not None else "",
+            afterlife_topic_allowed=ctx.afterlife_topic_allowed,
         )
         log.info("构建 System Prompt, soul=%s, 长度=%d chars, has_skill=%s, memories=%d",
                  profile.name, len(ctx.system_prompt),

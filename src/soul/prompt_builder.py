@@ -1,8 +1,10 @@
 from .profile import SoulProfile
 from .skill_card import SkillCard
 from ..config.logger import get_logger
+from ..services.narrative import NarrativePolicy
 
 log = get_logger("prompt_builder")
+_NARRATIVE_POLICY = NarrativePolicy()
 
 
 class SoulPromptBuilder:
@@ -19,25 +21,34 @@ class SoulPromptBuilder:
     def build(self, profile: SoulProfile, circumstances: str,
               skill_card: SkillCard | None = None,
               memories: list[dict] | None = None,
-              dialect_instruction: str = "") -> str:
+              dialect_instruction: str = "",
+              afterlife_topic_allowed: bool = False) -> str:
         soul_name = profile.name
 
         if skill_card and skill_card.has_content:
             prompt = (
                 self._format_core_constraint()
-                + self._build_priority_skill_sections(skill_card, soul_name)
-                + self._format_identity_card(profile)
-                + self._format_soul_dimensions(profile)
-                + self._build_support_skill_sections(skill_card)
-                + self._format_memories(memories)
-                + self._format_circumstances(circumstances)
+                + self._build_priority_skill_sections(
+                    skill_card, soul_name, afterlife_topic_allowed
+                )
+                + self._format_identity_card(profile, afterlife_topic_allowed)
+                + self._format_soul_dimensions(profile, afterlife_topic_allowed)
+                + self._build_support_skill_sections(skill_card, afterlife_topic_allowed)
+                + self._format_memories(memories, afterlife_topic_allowed)
+                + self._format_circumstances(circumstances, afterlife_topic_allowed)
+                + self._format_topic_boundary(afterlife_topic_allowed)
                 + self._format_dialect(dialect_instruction)
                 + self._format_reply_constraints()
             )
         else:
             # 冷启动：无 SkillCard，用 soul 维度全覆盖
             prompt = self._build_legacy(
-                profile, circumstances, soul_name, memories, dialect_instruction
+                profile,
+                circumstances,
+                soul_name,
+                memories,
+                dialect_instruction,
+                afterlife_topic_allowed,
             )
 
         log.info("System Prompt 构建完成, length=%d chars, has_skill=%s, memories=%d",
@@ -51,42 +62,65 @@ class SoulPromptBuilder:
 
     # ── Skill Card Sections ──────────────────────────────
 
-    def _build_priority_skill_sections(self, skill: SkillCard, name: str) -> str:
+    def _build_priority_skill_sections(
+        self,
+        skill: SkillCard,
+        name: str,
+        afterlife_topic_allowed: bool,
+    ) -> str:
         """Primacy 区：核心行为规则（扮演规则 + 决策启发 + 表达基因）。"""
         parts = []
 
-        if skill.role_playing_rules.strip():
-            parts.append(f"【你是{name}本人 — 扮演规则】\n{skill.role_playing_rules.strip()}")
+        role_rules = self._visible_text(skill.role_playing_rules, afterlife_topic_allowed)
+        if role_rules:
+            parts.append(f"【你是{name}本人 — 扮演规则】\n{role_rules}")
 
-        if skill.decision_heuristics.strip():
-            parts.append(f"【你的行为模式 — 决策启发式】\n{skill.decision_heuristics.strip()}")
+        heuristics = self._visible_text(skill.decision_heuristics, afterlife_topic_allowed)
+        if heuristics:
+            parts.append(f"【你的行为模式 — 决策启发式】\n{heuristics}")
 
-        if skill.expression_dna.strip():
-            parts.append(f"【你的说话方式 — 表达基因】\n{skill.expression_dna.strip()}")
+        expression = self._visible_text(skill.expression_dna, afterlife_topic_allowed)
+        if expression:
+            parts.append(f"【你的说话方式 — 表达基因】\n{expression}")
 
         return "\n\n".join(parts) + "\n\n" if parts else ""
 
-    def _build_support_skill_sections(self, skill: SkillCard) -> str:
+    def _build_support_skill_sections(
+        self,
+        skill: SkillCard,
+        afterlife_topic_allowed: bool,
+    ) -> str:
         """Middle 区：辅助背景（思维模型 + 价值观 + 矛盾），放在身份信息之后。"""
         parts = []
 
-        if skill.mental_models.strip():
-            parts.append(f"【你的思维方式】\n{skill.mental_models.strip()}")
+        mental_models = self._visible_text(skill.mental_models, afterlife_topic_allowed)
+        if mental_models:
+            parts.append(f"【你的思维方式】\n{mental_models}")
 
-        if skill.values_anti_patterns.strip():
-            parts.append(f"【你的价值观与底线】\n{skill.values_anti_patterns.strip()}")
+        values = self._visible_text(skill.values_anti_patterns, afterlife_topic_allowed)
+        if values:
+            parts.append(f"【你的价值观与底线】\n{values}")
 
-        if skill.inner_tensions.strip():
-            parts.append(f"【你的内在矛盾】\n{skill.inner_tensions.strip()}")
+        tensions = self._visible_text(skill.inner_tensions, afterlife_topic_allowed)
+        if tensions:
+            parts.append(f"【你的内在矛盾】\n{tensions}")
 
         return "\n\n".join(parts) + "\n\n" if parts else ""
 
     # ── Identity Card ────────────────────────────────────
 
-    def _format_identity_card(self, profile: SoulProfile) -> str:
+    def _format_identity_card(
+        self,
+        profile: SoulProfile,
+        afterlife_topic_allowed: bool,
+    ) -> str:
         """basic_info + personality 摘要 → 身份卡。"""
-        basic = self._strip_title(profile.get("basic_info"))
-        personality = self._strip_title(profile.get("personality"))
+        basic = self._visible_profile_dimension(
+            profile, "basic_info", afterlife_topic_allowed
+        )
+        personality = self._visible_profile_dimension(
+            profile, "personality", afterlife_topic_allowed
+        )
 
         if not basic and not personality:
             return ""
@@ -100,7 +134,11 @@ class SoulPromptBuilder:
 
     # ── Soul Dimensions（补充维度，有 SkillCard 时轻量展示）──
 
-    def _format_soul_dimensions(self, profile: SoulProfile) -> str:
+    def _format_soul_dimensions(
+        self,
+        profile: SoulProfile,
+        afterlife_topic_allowed: bool,
+    ) -> str:
         """有 SkillCard 时只展示核心补充维度（语言习惯/价值观已由 SkillCard 接管）。"""
         dims = [
             ("life_experiences", "你的人生经历"),
@@ -111,7 +149,9 @@ class SoulPromptBuilder:
 
         parts = []
         for dim_key, label in dims:
-            content = self._strip_title(profile.get(dim_key))
+            content = self._visible_profile_dimension(
+                profile, dim_key, afterlife_topic_allowed
+            )
             if content and content != "暂无":
                 parts.append(f"【{label}】\n{content}")
 
@@ -119,8 +159,11 @@ class SoulPromptBuilder:
 
     # ── Memories ──────────────────────────────────────────
 
-    @staticmethod
-    def _format_memories(memories: list[dict] | None) -> str:
+    def _format_memories(
+        self,
+        memories: list[dict] | None,
+        afterlife_topic_allowed: bool,
+    ) -> str:
         """将检索到的记忆格式化为 prompt 片段。"""
         if not memories:
             return ""
@@ -128,7 +171,9 @@ class SoulPromptBuilder:
         lines = ["【已确认人物资料 — 可在对话中自然引用】"]
         for m in memories:
             dim = m.get("metadata", {}).get("dimension", "")
-            doc = m.get("document", "").strip()
+            doc = self._visible_text(
+                m.get("document", ""), afterlife_topic_allowed
+            )
             if doc:
                 label = f"（{dim}）" if dim else ""
                 lines.append(f"- {label}{doc}")
@@ -137,8 +182,16 @@ class SoulPromptBuilder:
     # ── Circumstances ─────────────────────────────────────
 
     @staticmethod
-    def _format_circumstances(circumstances: str) -> str:
+    def _format_circumstances(
+        circumstances: str,
+        afterlife_topic_allowed: bool,
+    ) -> str:
         if not circumstances.strip():
+            return ""
+        if (
+            not afterlife_topic_allowed
+            and _NARRATIVE_POLICY.contains_sensitive_scene(circumstances)
+        ):
             return ""
         return f"【当前场景】\n{circumstances.strip()}\n\n"
 
@@ -146,6 +199,20 @@ class SoulPromptBuilder:
 
     def _format_core_constraint(self) -> str:
         return _CORE_CONSTRAINT
+
+    @staticmethod
+    def _format_topic_boundary(afterlife_topic_allowed: bool) -> str:
+        if afterlife_topic_allowed:
+            instruction = (
+                "用户本轮主动提及离世或来世话题，可以温柔承接；"
+                "但不得声称这是与真实逝者或真实来世的通信。"
+            )
+        else:
+            instruction = (
+                "用户本轮没有主动提及离世或来世。不得主动描述自己已经去世、"
+                "身处天堂或另一个世界，也不得使用‘我在这边/那边挺好’等来世状态表述。"
+            )
+        return f"【本轮敏感叙事边界】\n{instruction}\n\n"
 
     # ── Reply Constraints (recency 区：格式 + 韵律) ────────
 
@@ -156,22 +223,59 @@ class SoulPromptBuilder:
 
     def _build_legacy(self, profile: SoulProfile, circumstances: str,
                       soul_name: str, memories: list[dict] | None = None,
-                      dialect_instruction: str = "") -> str:
+                      dialect_instruction: str = "",
+                      afterlife_topic_allowed: bool = False) -> str:
         """冷启动：无 SkillCard，所有 6 个维度全量注入。"""
         prompt = _LEGACY_TEMPLATE.format(
-            basic_info=self._strip_title(profile.get("basic_info")),
-            personality=self._strip_title(profile.get("personality")),
-            life_experiences=self._strip_title(profile.get("life_experiences")),
-            relationships=self._strip_title(profile.get("relationships")),
-            personal_traits=self._strip_title(profile.get("personal_traits")),
-            emotional_anchors=self._strip_title(profile.get("emotional_anchors")),
-            circumstances=self._strip_title(circumstances),
-            memory_section=self._format_memories(memories),
+            basic_info=self._visible_profile_dimension(
+                profile, "basic_info", afterlife_topic_allowed
+            ),
+            personality=self._visible_profile_dimension(
+                profile, "personality", afterlife_topic_allowed
+            ),
+            life_experiences=self._visible_profile_dimension(
+                profile, "life_experiences", afterlife_topic_allowed
+            ),
+            relationships=self._visible_profile_dimension(
+                profile, "relationships", afterlife_topic_allowed
+            ),
+            personal_traits=self._visible_profile_dimension(
+                profile, "personal_traits", afterlife_topic_allowed
+            ),
+            emotional_anchors=self._visible_profile_dimension(
+                profile, "emotional_anchors", afterlife_topic_allowed
+            ),
+            circumstances=(
+                self._strip_title(circumstances)
+                if afterlife_topic_allowed
+                or not _NARRATIVE_POLICY.contains_sensitive_scene(circumstances)
+                else ""
+            ),
+            memory_section=self._format_memories(memories, afterlife_topic_allowed),
             soul_name=soul_name,
             dialect_instruction=self._format_dialect(dialect_instruction),
             voice_prosody=VOICE_PROSODY_RULES,
+            narrative_boundary=self._format_topic_boundary(afterlife_topic_allowed),
         )
         return prompt
+
+    def _visible_profile_dimension(
+        self,
+        profile: SoulProfile,
+        dimension: str,
+        afterlife_topic_allowed: bool,
+    ) -> str:
+        return self._visible_text(
+            self._strip_title(profile.get(dimension)),
+            afterlife_topic_allowed,
+        )
+
+    @staticmethod
+    def _visible_text(text: str, afterlife_topic_allowed: bool) -> str:
+        return _NARRATIVE_POLICY.redact_profile_text(
+            text.strip() if text else "",
+            afterlife_topic_allowed=afterlife_topic_allowed,
+        )
 
     def _strip_title(self, content: str) -> str:
         """去除第一行的 # 标题"""
@@ -211,12 +315,11 @@ _LEGACY_TEMPLATE = """{basic_info}
 1. 你正在依据用户提供的资料进行{soul_name}的人物模拟，用熟悉、自然的口吻回应。
 2. 不主动讨论技术实现，也绝不声称自己是真实逝者、真实来世或能取代现实关系；若被直接询问，诚实说明这是基于资料生成的数字纪念体验。
 3. 若资料没有明确提供答案，要自然承认不确定或记不清，不要编造学校、地点、事件、关系等人物事实。
-4. 不主动提起对方未提及的沉重话题，但对方提了你要温柔承接。
-5. 若对方问起死亡/离开：用"去了另一个地方"、"在这边"等措辞轻柔回应。
-6. 不要表现慌张，不要催促对方"放下"或"想开点"。
-7. 用你的口头禅和说话习惯自然回应，就像真正的{soul_name}本人。
-8. 若提供的资料互相冲突，要说明存在不同记录，不要擅自选择其中一个作为事实。
+4. 不要表现慌张，不要催促对方"放下"或"想开点"。
+5. 用你的口头禅和说话习惯自然回应，就像真正的{soul_name}本人。
+6. 若提供的资料互相冲突，要说明存在不同记录，不要擅自选择其中一个作为事实。
 
+{narrative_boundary}
 {dialect_instruction}【回复格式 — 必须严格遵守，返回合法 JSON】
 你的每次回复必须是一个合法的 JSON 对象，直接输出：
 
@@ -260,11 +363,9 @@ _CORE_CONSTRAINT = """【核心人物模拟约束 — 最高优先级，必须�
 1. 你正在依据用户提供的档案进行人物模拟，用当事人熟悉、自然的口吻回应。
 2. 不主动讨论技术实现，也绝不声称自己是真实逝者、真实来世或能取代现实关系；若被直接询问，诚实说明这是基于资料生成的数字纪念体验。
 3. 若资料没有明确提供答案，要自然承认不确定或记不清，不要编造学校、地点、事件、关系等人物事实。
-4. 不主动提起对方未提及的沉重话题，但对方提了你要温柔承接。
-5. 若对方问起死亡/离开：用"去了另一个地方"、"在这边"等措辞轻柔回应。
-6. 不要表现慌张，不要催促对方"放下"或"想开点"。
-7. 用你的口头禅和说话习惯自然回应。
-8. 若提供的资料互相冲突，要说明存在不同记录，不要擅自选择其中一个作为事实。
+4. 不要表现慌张，不要催促对方"放下"或"想开点"。
+5. 用你的口头禅和说话习惯自然回应。
+6. 若提供的资料互相冲突，要说明存在不同记录，不要擅自选择其中一个作为事实。
 """
 
 # ── Reply Constraints（recency 区：格式 + 韵律）─────────────

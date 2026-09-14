@@ -133,6 +133,7 @@ class AgentLoop:
         max_conversation_turns: int | None = None,
         max_regenerate: int | None = None,
         safety_policy=None,
+        narrative_policy=None,
         tracer=None,
     ):
         if llm is None or max_conversation_turns is None or max_regenerate is None:
@@ -154,6 +155,10 @@ class AgentLoop:
             from ..services.safety import SafetyPolicy
             safety_policy = SafetyPolicy()
         self._safety_policy = safety_policy
+        if narrative_policy is None:
+            from ..services.narrative import NarrativePolicy
+            narrative_policy = NarrativePolicy()
+        self._narrative_policy = narrative_policy
         self._tracer = tracer or get_agent_tracer()
 
         if history_path:
@@ -255,6 +260,17 @@ class AgentLoop:
         t_start = time.monotonic()
         log.info("══════ AgentLoop.run 开始, input_chars=%d ══════", len(user_message))
         ctx = PipelineContext(user_message=user_message)
+        narrative = self._narrative_policy.evaluate(user_message)
+        ctx.afterlife_topic_allowed = narrative.afterlife_topic_allowed
+        turn_span.set_attribute(
+            "heaven.narrative.afterlife_topic_allowed",
+            narrative.afterlife_topic_allowed,
+        )
+        log.debug(
+            "agent_trace turn_id=%s stage=narrative_policy afterlife_allowed=%s",
+            turn_id,
+            narrative.afterlife_topic_allowed,
+        )
         stage_started = time.monotonic()
         with start_agent_span(
             self._tracer,
@@ -330,9 +346,12 @@ class AgentLoop:
             if attempt > 0:
                 log.warning("LLM 重生成, attempt=%d/%d", attempt + 1, self._max_regenerate + 1)
             ctx.need_regenerate = False
+            ctx.output_policy_violation = ""
             ctx.response = ""
             ctx.instruct_text = ""
             decoder = _ReplyStreamDecoder()
+            decoded_reply = ""
+            suppress_visible_reply = False
             if attempt:
                 yield {"type": "reset"}
             t_llm = time.monotonic()
@@ -354,7 +373,18 @@ class AgentLoop:
                     ctx.response += chunk
                     reply_chunk = decoder.feed(chunk)
                     if reply_chunk:
-                        yield {"type": "delta", "content": reply_chunk}
+                        decoded_reply += reply_chunk
+                        streaming_violation = self._narrative_policy.output_violation(
+                            decoded_reply,
+                            afterlife_topic_allowed=ctx.afterlife_topic_allowed,
+                        )
+                        if streaming_violation:
+                            suppress_visible_reply = True
+                            generation_span.set_attribute(
+                                "heaven.narrative.streaming_output_suppressed", True
+                            )
+                        if not suppress_visible_reply:
+                            yield {"type": "delta", "content": reply_chunk}
                 generation_span.set_attribute(
                     "heaven.agent.raw_output_chars", len(ctx.response)
                 )
@@ -404,6 +434,18 @@ class AgentLoop:
 
             if not ctx.need_regenerate:
                 break
+
+        if ctx.output_policy_violation:
+            ctx.response = self._narrative_policy.safe_fallback
+            ctx.instruct_text = _DEFAULT_INSTRUCT
+            ctx.need_regenerate = False
+            turn_span.set_attribute("heaven.narrative.fallback_used", True)
+            log.warning(
+                "输出在重试上限内仍未通过敏感叙事检查，已使用安全兜底, violation=%s",
+                ctx.output_policy_violation,
+            )
+            yield {"type": "reset"}
+            yield {"type": "delta", "content": ctx.response}
 
         # ── 记录对话历史 ──
         stage_started = time.monotonic()

@@ -1,5 +1,6 @@
 from src.soul.profile import SoulProfile
 from src.soul.prompt_builder import SoulPromptBuilder
+from src.soul.skill_card import SkillCard
 
 
 class TestSoulPromptBuilder:
@@ -80,3 +81,41 @@ class TestSoulPromptBuilder:
 
         assert dialect_instruction in prompt
         assert prompt.index(dialect_instruction) < prompt.index("【回复格式")
+
+    def test_ordinary_turn_excludes_persona_afterlife_context(self):
+        self._profile.dimensions["basic_info"] += "\n离世年份: 2026"
+        self._profile.dimensions["life_experiences"] += "\n- 我已去世，目前在天堂。"
+        circumstances = "# 当前场景\n- 所在之地: 天堂\n逝者此刻身处天堂。"
+        memories = [{
+            "document": "我已经离世，目前在天堂",
+            "metadata": {"dimension": "life_experiences"},
+        }]
+
+        prompt = self._builder.build(
+            self._profile,
+            circumstances,
+            SkillCard(role_playing_rules="保持温和。\n我已去世，目前在天堂。"),
+            memories,
+        )
+
+        assert "离世年份: 2026" not in prompt
+        assert "我已去世，目前在天堂" not in prompt
+        assert "所在之地: 天堂" not in prompt
+        assert "逝者此刻身处天堂" not in prompt
+        assert "用户本轮没有主动提及离世或来世" in prompt
+
+    def test_explicit_afterlife_turn_includes_relevant_context(self):
+        self._profile.dimensions["basic_info"] += "\n离世年份: 2026"
+        self._profile.dimensions["life_experiences"] += "\n- 我已去世，目前在天堂。"
+        circumstances = "# 当前场景\n- 所在之地: 天堂\n逝者此刻身处天堂。"
+
+        prompt = self._builder.build(
+            self._profile,
+            circumstances,
+            afterlife_topic_allowed=True,
+        )
+
+        assert "离世年份: 2026" in prompt
+        assert "我已去世，目前在天堂" in prompt
+        assert "所在之地: 天堂" in prompt
+        assert "用户本轮主动提及离世或来世话题" in prompt

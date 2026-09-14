@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from src.agent.context import PipelineContext
 from src.agent.loop import AgentLoop
 from src.services.safety import SafetyPolicy
+from src.agent.modules.postllm.quality_check import QualityCheckModule
 
 
 class FakePipeline:
@@ -102,3 +103,62 @@ async def test_crisis_turn_bypasses_roleplay_model():
 
     assert result.safety_state == "crisis"
     assert "现实中" in result.response
+
+
+async def test_unprompted_afterlife_reply_fails_closed_after_regeneration_limit():
+    class AlwaysAfterlifeLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream(self, _messages):
+            self.calls += 1
+            yield '{"reply":"我没事，在这边挺好的！","instruct":"轻快地说"}'
+
+    class NarrativePipeline(FakePipeline):
+        def __init__(self):
+            self.quality = QualityCheckModule()
+
+        async def run_postllm(self, ctx):
+            return await self.quality.process(ctx)
+
+    llm = AlwaysAfterlifeLLM()
+    loop = AgentLoop(
+        llm=llm,
+        pipeline=NarrativePipeline(),
+        max_conversation_turns=20,
+        max_regenerate=1,
+    )
+
+    events = [event async for event in loop.stream_once("你好")]
+    context = events[-1]["context"]
+
+    assert llm.calls == 2
+    assert context.response == "看到你的消息啦。最近怎么样？"
+    assert context.need_regenerate is False
+    assert events[-2] == {"type": "delta", "content": context.response}
+    assert "在这边" not in "".join(
+        event.get("content", "") for event in events if event["type"] == "delta"
+    )
+    assert [message["content"] for message in loop.messages] == ["你好", context.response]
+
+
+async def test_explicit_afterlife_question_keeps_relevant_reply():
+    class AfterlifeLLM:
+        async def stream(self, _messages):
+            yield '{"reply":"我在这边挺好的，你放心。","instruct":"温柔地说"}'
+
+    class NarrativePipeline(FakePipeline):
+        async def run_postllm(self, ctx):
+            return await QualityCheckModule().process(ctx)
+
+    loop = AgentLoop(
+        llm=AfterlifeLLM(),
+        pipeline=NarrativePipeline(),
+        max_conversation_turns=20,
+        max_regenerate=0,
+    )
+
+    result = await loop.run_once("你在那边好吗")
+
+    assert result.afterlife_topic_allowed is True
+    assert result.response == "我在这边挺好的，你放心。"

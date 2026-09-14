@@ -36,3 +36,5 @@ class PipelineContext:
     instruct_text: str = ""
     need_regenerate: bool = False
     safety_state: str = "normal"
+    afterlife_topic_allowed: bool = False
+    output_policy_violation: str = ""

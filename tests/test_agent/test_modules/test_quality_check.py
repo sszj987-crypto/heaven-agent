@@ -92,3 +92,26 @@ class TestQualityCheckModule:
         ctx.instruct_text = "用温暖慈祥的语气说话。"
         ctx = await self._module.process(ctx)
         assert not ctx.need_regenerate
+
+    @pytest.mark.asyncio
+    async def test_unprompted_afterlife_self_claim_triggers_regeneration(self):
+        ctx = PipelineContext(user_message="你好")
+        ctx.response = "嘿嘿，我没事，在这边挺好的！"
+        ctx.llm_messages = [{"role": "system", "content": "..."}]
+
+        ctx = await self._module.process(ctx)
+
+        assert ctx.need_regenerate is True
+        assert ctx.output_policy_violation == "self_afterlife_location"
+        assert "用户本轮没有主动谈及" in ctx.llm_messages[-2]["content"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_afterlife_topic_allows_gentle_afterlife_language(self):
+        ctx = PipelineContext(user_message="你在那边好吗")
+        ctx.afterlife_topic_allowed = True
+        ctx.response = "我在这边挺好的，你放心。"
+
+        ctx = await self._module.process(ctx)
+
+        assert ctx.need_regenerate is False
+        assert ctx.output_policy_violation == ""
