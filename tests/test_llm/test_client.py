@@ -1,7 +1,14 @@
+import logging
 import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
-from src.llm.client import LLMClient, _content_from_stream_chunk, _stream_payload
+from src.config.logger import get_level, set_level
+from src.llm.client import (
+    LLMClient,
+    _content_from_stream_chunk,
+    _log_messages_debug,
+    _stream_payload,
+)
 
 
 class TestLLMClient:
@@ -117,3 +124,37 @@ def test_stream_content_uses_visible_content_and_never_reasoning():
     assert has_reasoning is True
     assert reasoning_only == ""
     assert reasoning_only_present is True
+
+
+def test_debug_log_contains_complete_llm_messages(caplog):
+    previous_level = get_level()
+    set_level("debug")
+    caplog.set_level(logging.DEBUG, logger="heaven")
+    try:
+        _log_messages_debug([
+            {"role": "system", "content": "第一行系统提示\n第二行系统提示"},
+            {"role": "user", "content": "完整用户输入"},
+        ])
+    finally:
+        set_level(previous_level)
+
+    output = "\n".join(record.getMessage() for record in caplog.records)
+    assert "LLM 完整输入开始" in output
+    assert "role=system" in output
+    assert "第一行系统提示\n第二行系统提示" in output
+    assert "role=user" in output
+    assert "完整用户输入" in output
+    assert "LLM 完整输入结束" in output
+
+
+def test_error_log_level_does_not_log_llm_message_content(caplog):
+    previous_level = get_level()
+    caplog.set_level(logging.DEBUG, logger="heaven")
+    set_level("error")
+    try:
+        _log_messages_debug([{"role": "user", "content": "不应记录的内容"}])
+    finally:
+        set_level(previous_level)
+
+    output = "\n".join(record.getMessage() for record in caplog.records)
+    assert "不应记录的内容" not in output

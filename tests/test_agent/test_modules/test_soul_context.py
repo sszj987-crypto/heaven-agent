@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 from src.agent.context import PipelineContext
 from src.agent.modules.prellm.soul_context import SoulContextModule
 from src.soul.profile import SoulProfile
+from src.voice.dialect import DialectConfig
 
 
 class TestSoulContextModule:
@@ -101,3 +102,25 @@ class TestSoulContextModule:
 
         assert "曾经住在苏州" in second.system_prompt
         assert "喜欢桂花糕" not in second.system_prompt
+
+    @pytest.mark.asyncio
+    async def test_cantonese_instruction_is_immediately_before_current_user(self):
+        self._module._dialect_settings = MagicMock()
+        self._module._dialect_settings.load.return_value = DialectConfig(
+            enabled=True,
+            dialect_id="cantonese",
+        )
+
+        ctx = await self._module.process(PipelineContext(user_message="奶奶你好"))
+
+        assert [message["role"] for message in ctx.llm_messages] == [
+            "system",
+            "user",
+            "assistant",
+            "system",
+            "user",
+        ]
+        dialect_message = ctx.llm_messages[-2]["content"]
+        assert "方言模式：粤语" in dialect_message
+        assert "方言模式：粤语" not in ctx.system_prompt
+        assert ctx.dialect_text_instruction == dialect_message

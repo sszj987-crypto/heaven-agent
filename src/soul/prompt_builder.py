@@ -21,7 +21,6 @@ class SoulPromptBuilder:
     def build(self, profile: SoulProfile, circumstances: str,
               skill_card: SkillCard | None = None,
               memories: list[dict] | None = None,
-              dialect_instruction: str = "",
               afterlife_topic_allowed: bool = False) -> str:
         soul_name = profile.name
 
@@ -37,7 +36,6 @@ class SoulPromptBuilder:
                 + self._format_memories(memories, afterlife_topic_allowed)
                 + self._format_circumstances(circumstances, afterlife_topic_allowed)
                 + self._format_topic_boundary(afterlife_topic_allowed)
-                + self._format_dialect(dialect_instruction)
                 + self._format_reply_constraints()
             )
         else:
@@ -47,7 +45,6 @@ class SoulPromptBuilder:
                 circumstances,
                 soul_name,
                 memories,
-                dialect_instruction,
                 afterlife_topic_allowed,
             )
 
@@ -55,10 +52,6 @@ class SoulPromptBuilder:
                  len(prompt), bool(skill_card and skill_card.has_content),
                  len(memories) if memories else 0)
         return prompt
-
-    @staticmethod
-    def _format_dialect(instruction: str) -> str:
-        return f"{instruction.strip()}\n\n" if instruction.strip() else ""
 
     # ── Skill Card Sections ──────────────────────────────
 
@@ -223,7 +216,6 @@ class SoulPromptBuilder:
 
     def _build_legacy(self, profile: SoulProfile, circumstances: str,
                       soul_name: str, memories: list[dict] | None = None,
-                      dialect_instruction: str = "",
                       afterlife_topic_allowed: bool = False) -> str:
         """冷启动：无 SkillCard，所有 6 个维度全量注入。"""
         prompt = _LEGACY_TEMPLATE.format(
@@ -253,9 +245,8 @@ class SoulPromptBuilder:
             ),
             memory_section=self._format_memories(memories, afterlife_topic_allowed),
             soul_name=soul_name,
-            dialect_instruction=self._format_dialect(dialect_instruction),
-            voice_prosody=VOICE_PROSODY_RULES,
             narrative_boundary=self._format_topic_boundary(afterlife_topic_allowed),
+            reply_constraints=_REPLY_CONSTRAINTS,
         )
         return prompt
 
@@ -320,42 +311,19 @@ _LEGACY_TEMPLATE = """{basic_info}
 6. 若提供的资料互相冲突，要说明存在不同记录，不要擅自选择其中一个作为事实。
 
 {narrative_boundary}
-{dialect_instruction}【回复格式 — 必须严格遵守，返回合法 JSON】
-你的每次回复必须是一个合法的 JSON 对象，直接输出：
-
-{{
-  "reply": "在这里写你对对方说的话，就像日常聊天一样自然回复。",
-  "instruct": "用温和、轻柔的语气说话。"
-}}
-
-**要求：**
-- 只输出 JSON 本身，不要加任何前缀说明或后缀补充，不要用代码块包裹。
-- reply 是你用日常聊天的自然口语说给对方听的话。
-- instruct 用一句简短中文描述本轮 TTS 的语气、轻重与语速，不要加入动作或台词。
-
-{voice_prosody}
-- 确保 JSON 合法可解析，reply 中的双引号需要转义为 \\"，换行需要转义为 \\n。
+{reply_constraints}
 """
 # ── 语音韵律控制（初稿和润色阶段共用）─────────────────
 
-VOICE_PROSODY_RULES = """【语音韵律控制 — 极其重要】
-你的回复将直接送入高保真语音合成引擎，该引擎对标点符号非常敏感。所有情感起伏、语速变化、停顿节奏，都靠你的文本中的标点和语气词来驱动，而不是靠外部指令。
+VOICE_PROSODY_RULES = """【instruct 生成原则 — 根据本轮回复判断】
+1. instruct 是开放的自然语言语音指导，可以细腻描述语气、情绪、轻重、节奏、停顿和语调；但必须与本轮 reply 实际表达一致，不要照抄示例或只根据人物的总体性格发挥。
+2. 判断顺序：先看 reply 的语义和标点，再看用户本轮情绪，最后才参考人物平时的表达风格。不要在 instruct 中加入 reply 没有体现的情绪或节奏。
+3. 普通问候、简短日常对话和普通问句默认使用正常语速。温暖、亲昵本身不是放慢语速的理由，不要无依据地写“稍慢”“缓慢”。
+4. 只有 reply 明确在安慰、哀伤、迟疑、郑重表达，或使用停顿、省略号呈现舒缓节奏时，才描述慢速；开心、轻快、连续感叹或连续问句应使用正常或稍快语速。
+5. 做一致性检查：不得出现“轻快但慢速”“平静但急促”等互相冲突的组合。若没有充分依据，优先选择自然语气和正常语速。
+6. instruct 只写给语音引擎的说话方式，不得包含动作、台词、人物事实、方言要求或原因解释。
 
-你必须做到：
-1. 表达迟疑、低落、思考或温柔时，大量使用省略号（…）和逗号（，），把句子断开。
-   例如："其实呢… 我今天，有点想你了…"
-   （这会让语音放慢，产生温柔、低沉或略带伤感的效果）
-
-2. 表达轻快、安慰、开心或亲昵时，使用波浪号（~）或感叹号（！），并多用语气词（呀、呢、啦、嘛、吧、哦）。
-   例如："没关系的呀~ 都会好起来的！"
-   （这会让语速变轻快、语调上扬，产生温暖、喜悦的效果）
-
-3. 表达关切、疑问时，自然地使用问号（？），句末语气词多用"吗""呢""吧"。
-   例如："你最近，过得还好吗？"
-
-4. 绝对不要在文本中使用 *动作描写*（如 *叹气*、*笑着说*、*抹眼泪*），语音引擎会把它们当成字读出来。所有情感必须通过标点和语气词自然流露。
-
-5. 保持你个人的口语风格和口头禅，但让标点真正参与情感表达——不要每句都是句号结尾。善用省略号和波浪号来塑造节奏。"""
+reply 的标点也应自然配合语义：迟疑或安抚可用少量省略号，轻快可用感叹号，疑问用问号；不要为了控制语音堆砌标点。不要在 reply 中使用动作描写（如 *叹气*、*笑着说*、*抹眼泪*），语音引擎会把它们当成文字读出。"""
 
 # ── Core Constraint（primacy 区：角色身份 + 禁止事项）─────
 
@@ -375,13 +343,13 @@ _REPLY_CONSTRAINTS = f"""【回复格式 — 必须严格遵守，返回合法 J
 
 {{
   "reply": "在这里写你对对方说的话，就像日常聊天一样自然回复。",
-  "instruct": "用温和、轻柔的语气说话。"
+  "instruct": "用自然、亲切的语气，保持正常语速。"
 }}
 
 **要求：**
 - 只输出 JSON 本身，不要加任何前缀说明或后缀补充，不要用代码块包裹。
 - reply 是你用日常聊天的自然口语说给对方听的话。
-- instruct 用一句简短中文描述本轮 TTS 的语气、轻重与语速，不要加入动作或台词。
+- instruct 用一句简短中文描述本轮 TTS 的说话方式，不限制可描述的表达维度。
 
 {VOICE_PROSODY_RULES}
 - 确保 JSON 合法可解析，reply 中的双引号需要转义为 \\"，换行需要转义为 \\n。

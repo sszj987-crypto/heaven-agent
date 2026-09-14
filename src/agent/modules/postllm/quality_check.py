@@ -7,6 +7,17 @@ log = get_logger("quality_check")
 _NARRATIVE_POLICY = NarrativePolicy()
 
 
+def _append_regeneration_instruction(ctx: PipelineContext, warning: str) -> None:
+    """Keep turn-scoped dialect guidance immediately before the retried user input."""
+    ctx.llm_messages.append({"role": "system", "content": warning})
+    if ctx.dialect_text_instruction:
+        ctx.llm_messages.append({
+            "role": "system",
+            "content": ctx.dialect_text_instruction,
+        })
+    ctx.llm_messages.append({"role": "user", "content": ctx.user_message})
+
+
 class QualityCheckModule(PipelineModule):
     """输出质量检查：检测回复文本和语音语气中的禁忌词/极端词，触发 LLM 重新生成"""
 
@@ -40,15 +51,14 @@ class QualityCheckModule(PipelineModule):
         )
         if narrative_violation:
             ctx.output_policy_violation = narrative_violation
-            ctx.llm_messages.append({
-                "role": "system",
-                "content": (
+            _append_regeneration_instruction(
+                ctx,
+                (
                     "[内部警告] 用户本轮没有主动谈及离世或来世，但上一轮回复主动描述了"
                     "自身的离世状态或来世位置。请完全忽略上一段回复，像普通日常聊天一样回应，"
                     "不要提到天堂、另一个世界、这边或那边的生活状态。"
                 ),
-            })
-            ctx.llm_messages.append({"role": "user", "content": ctx.user_message})
+            )
             ctx.need_regenerate = True
             log.warning(
                 "回复触发未请求的敏感叙事，触发重生成, violation=%s",
@@ -60,15 +70,14 @@ class QualityCheckModule(PipelineModule):
         for pattern in self._FORBIDDEN_REPLY:
             if pattern in ctx.response:
                 log.warning("回复文本检测到禁忌词: %s, 触发重生成", pattern)
-                ctx.llm_messages.append({
-                    "role": "system",
-                    "content": (
+                _append_regeneration_instruction(
+                    ctx,
+                    (
                         "[内部警告] 上一轮回复触发了设定约束。"
                         "请完全忽略上一段回复，换个说法重新表达，"
                         "避免用'没有情感''无法感知'等冷漠措辞推脱回应。"
                     ),
-                })
-                ctx.llm_messages.append({"role": "user", "content": ctx.user_message})
+                )
                 ctx.need_regenerate = True
                 return ctx
 
@@ -76,14 +85,13 @@ class QualityCheckModule(PipelineModule):
         for pattern in self._FORBIDDEN_INSTRUCT:
             if pattern in ctx.instruct_text:
                 log.warning("语音语气检测到极端用词: %s, 触发重生成", pattern)
-                ctx.llm_messages.append({
-                    "role": "system",
-                    "content": (
+                _append_regeneration_instruction(
+                    ctx,
+                    (
                         "[内部警告] 上一轮回复的语音语气中出现了极端用词（如'怒吼''咆哮'等）。"
-                        "请使用温暖、平静的语调描述语音语气，例如'用温柔慈祥的语气说话'。"
+                        "请改用温暖、平静的自然语言语音指导，并确保与 reply 的表达一致。"
                     ),
-                })
-                ctx.llm_messages.append({"role": "user", "content": ctx.user_message})
+                )
                 ctx.need_regenerate = True
                 return ctx
 

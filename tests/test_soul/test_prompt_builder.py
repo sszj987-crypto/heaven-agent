@@ -73,14 +73,16 @@ class TestSoulPromptBuilder:
         prompt = self._builder.build(self._profile, "")
 
         assert '"instruct"' in prompt
-        assert "语气" in prompt
+        assert '"prosody"' not in prompt
+        assert "不限制可描述的表达维度" in prompt
 
-    def test_cantonese_instruction_is_before_reply_contract(self):
-        dialect_instruction = "【方言模式：粤语】\n所有 reply 必须使用自然的繁体粤语口语。"
-        prompt = self._builder.build(self._profile, "", dialect_instruction=dialect_instruction)
+    def test_instruct_rules_require_evidence_and_internal_consistency(self):
+        prompt = self._builder.build(self._profile, "")
 
-        assert dialect_instruction in prompt
-        assert prompt.index(dialect_instruction) < prompt.index("【回复格式")
+        assert "普通问候、简短日常对话和普通问句默认使用正常语速" in prompt
+        assert "温暖、亲昵本身不是放慢语速的理由" in prompt
+        assert "不得出现“轻快但慢速”“平静但急促”" in prompt
+        assert "先看 reply 的语义和标点，再看用户本轮情绪" in prompt
 
     def test_ordinary_turn_excludes_persona_afterlife_context(self):
         self._profile.dimensions["basic_info"] += "\n离世年份: 2026"

@@ -57,13 +57,22 @@ def _content_from_stream_chunk(chunk: dict[str, Any]) -> tuple[str, bool]:
 
 
 def _log_messages_debug(messages: list[dict]):
-    """DEBUG 级别只打印消息结构，不记录私密正文。"""
+    """DEBUG 级别打印实际发送给 LLM 的完整 messages。"""
     if not log.isEnabledFor(10):  # DEBUG level
         return
+    log.debug("── LLM 完整输入开始（total=%d msgs）──", len(messages))
     for i, msg in enumerate(messages):
-        role = msg["role"]
-        content = msg["content"]
-        log.debug("[msg %d/%d] role=%s, len=%d", i + 1, len(messages), role, len(content))
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        log.debug(
+            "[msg %d/%d] role=%s, len=%d\n%s",
+            i + 1,
+            len(messages),
+            role,
+            len(content),
+            content,
+        )
+    log.debug("── LLM 完整输入结束 ──")
 
 
 class LLMClient:

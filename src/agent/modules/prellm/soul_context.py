@@ -20,6 +20,7 @@ class SoulContextModule(PipelineModule):
         cls._loader = soul_loader
         cls._messages = message_manager
         cls._builder = None
+        cls._dialect_settings = None
 
     @property
     def _prompt_builder(self):
@@ -46,7 +47,6 @@ class SoulContextModule(PipelineModule):
             circumstances,
             skill_card,
             memories,
-            dialect.text_instruction if dialect is not None else "",
             afterlife_topic_allowed=ctx.afterlife_topic_allowed,
         )
         log.info("构建 System Prompt, soul=%s, 长度=%d chars, has_skill=%s, memories=%d",
@@ -57,12 +57,22 @@ class SoulContextModule(PipelineModule):
         history = self._messages.get_all()
         ctx.llm_messages = [{"role": "system", "content": ctx.system_prompt}]
         ctx.llm_messages.extend(history)
+        dialect_instruction = dialect.text_instruction if dialect is not None else ""
+        ctx.dialect_text_instruction = dialect_instruction
+        if dialect_instruction:
+            # 方言约束贴近当前输入，避免被较长的人物资料和历史消息稀释。
+            ctx.llm_messages.append({"role": "system", "content": dialect_instruction})
         ctx.llm_messages.append({"role": "user", "content": ctx.user_message})
         log.info("Soul Context 构建完成, system=%d chars, history=%d msgs, current_msg=%d chars, total_msgs=%d",
                  len(ctx.system_prompt), len(history), len(ctx.user_message), len(ctx.llm_messages))
         # 仅记录结构与长度，避免私密内容进入日志。
         if log.isEnabledFor(10):
             log.debug("── LLM 输入结构（total=%d msgs）──", len(ctx.llm_messages))
+            log.debug(
+                "方言指令: enabled=%s, placement=%s",
+                bool(dialect_instruction),
+                "before_current_user" if dialect_instruction else "none",
+            )
             for i, msg in enumerate(ctx.llm_messages):
                 log.debug("[%d/%d] role=%s, len=%d",
                          i + 1, len(ctx.llm_messages), msg["role"], len(msg["content"]))

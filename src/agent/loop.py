@@ -78,7 +78,7 @@ class _ReplyStreamDecoder:
 def _parse_llm_response(raw: str) -> tuple[str, str]:
     """
     从 LLM 响应中提取 reply 和 instruct。
-    期望 JSON 格式：{"reply": "..."}。
+    期望 JSON 格式：{"reply": "...", "instruct": "..."}。
     解析失败时整段文本作为 reply，使用默认语气。
     """
     text = raw.strip()
@@ -326,13 +326,18 @@ class AgentLoop:
                 "heaven.agent.retrieved_memory_count", len(ctx.retrieved_memories)
             )
         if safety.state == "supportive_redirect":
-            ctx.llm_messages.append({
+            supportive_message = {
                 "role": "system",
                 "content": (
                     "用户正在表达强烈痛苦。保持温和但不要强化依赖或声称超自然真实性；"
                     "鼓励用户联系现实中信任的人，并说明 AI 不能替代专业支持。"
                 ),
-            })
+            }
+            # 保持本轮方言指令仍是离当前用户输入最近的 system message。
+            insert_at = max(len(ctx.llm_messages) - 1, 0)
+            if ctx.dialect_text_instruction and insert_at > 0:
+                insert_at -= 1
+            ctx.llm_messages.insert(insert_at, supportive_message)
         log.debug(
             "agent_trace turn_id=%s stage=prellm duration_ms=%.1f llm_messages=%d memories=%d",
             turn_id,

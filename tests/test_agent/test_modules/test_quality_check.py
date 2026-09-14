@@ -106,6 +106,29 @@ class TestQualityCheckModule:
         assert "用户本轮没有主动谈及" in ctx.llm_messages[-2]["content"]
 
     @pytest.mark.asyncio
+    async def test_regeneration_keeps_dialect_instruction_before_retried_user(self):
+        ctx = PipelineContext(user_message="你好")
+        ctx.response = "我没有情感，所以不能回应。"
+        ctx.dialect_text_instruction = "【方言模式：粤语】请使用繁体粤语口语。"
+        ctx.llm_messages = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "system", "content": ctx.dialect_text_instruction},
+            {"role": "user", "content": ctx.user_message},
+        ]
+
+        ctx = await self._module.process(ctx)
+
+        assert ctx.need_regenerate is True
+        assert ctx.llm_messages[-2] == {
+            "role": "system",
+            "content": ctx.dialect_text_instruction,
+        }
+        assert ctx.llm_messages[-1] == {
+            "role": "user",
+            "content": ctx.user_message,
+        }
+
+    @pytest.mark.asyncio
     async def test_explicit_afterlife_topic_allows_gentle_afterlife_language(self):
         ctx = PipelineContext(user_message="你在那边好吗")
         ctx.afterlife_topic_allowed = True
