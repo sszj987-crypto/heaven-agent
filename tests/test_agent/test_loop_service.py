@@ -72,6 +72,26 @@ async def test_completed_turn_is_restored_from_sqlite_after_restart(tmp_path):
     assert [message["content"] for message in restored.messages] == ["第一条", "收到"]
 
 
+async def test_background_run_id_is_committed_with_its_history(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.sqlite3")
+    loop = AgentLoop(
+        llm=MeasuringLLM(),
+        pipeline=FakePipeline(),
+        history_store=store,
+        max_conversation_turns=20,
+        max_regenerate=0,
+    )
+
+    events = [
+        event
+        async for event in loop.stream_once("需要原子提交", run_id="chat_atomic")
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert store.last_completed_run_id() == "chat_atomic"
+    assert store.revision() == 1
+
+
 async def test_persistence_failure_rolls_back_in_memory_turn():
     class FailingStore:
         def load(self):

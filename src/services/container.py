@@ -95,9 +95,9 @@ class ApplicationContainer:
         voice_installed, _ = voice_dependencies_available(sys.platform, root)
         voice = _create_selected_voice(settings, layout.voice_dir, root, settings.soul_id)
         dialect_settings = DialectSettings(layout.dialect_path)
-        chat_runs = ChatRunManager()
         conversation_store = ConversationStore(layout.conversation_db_path)
         conversation_store.migrate_json_once(layout.conversation_path)
+        chat_runs = ChatRunManager(store=conversation_store)
         pipeline = Pipeline()
         agent_loop = AgentLoop(
             llm=llm,
@@ -116,6 +116,7 @@ class ApplicationContainer:
             job_manager=jobs,
             dialect_settings=dialect_settings,
         )
+        chat_runs.resume(agent_loop)
         distiller = SoulDistiller(llm, soul_loader, max_retries=settings.distill_max_retries)
         candidate_service = CandidateService(
             candidates, soul_loader, agent_loop.invalidate_soul_cache

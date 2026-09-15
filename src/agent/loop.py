@@ -204,17 +204,27 @@ class AgentLoop:
             raise RuntimeError("对话未返回结果")
         return completed_context
 
-    async def stream_once(self, user_message: str) -> AsyncGenerator[dict, None]:
+    async def stream_once(
+        self,
+        user_message: str,
+        *,
+        run_id: str | None = None,
+    ) -> AsyncGenerator[dict, None]:
         """Run one turn and yield visible reply deltas followed by its context."""
         async with self._turn_lock:
-            stream = self._stream_unlocked(user_message)
+            stream = self._stream_unlocked(user_message, run_id=run_id)
             try:
                 async for event in stream:
                     yield event
             finally:
                 await stream.aclose()
 
-    async def _stream_unlocked(self, user_message: str) -> AsyncGenerator[dict, None]:
+    async def _stream_unlocked(
+        self,
+        user_message: str,
+        *,
+        run_id: str | None = None,
+    ) -> AsyncGenerator[dict, None]:
         attributes = {
             "gen_ai.operation.name": "invoke_agent",
             "heaven.agent.input_chars": len(user_message),
@@ -239,7 +249,7 @@ class AgentLoop:
             "heaven.agent.turn",
             attributes=attributes,
         ) as turn_span:
-            turn = self._run_turn(user_message, turn_span, turn_id)
+            turn = self._run_turn(user_message, turn_span, turn_id, run_id=run_id)
             try:
                 async for event in turn:
                     yield event
@@ -266,6 +276,8 @@ class AgentLoop:
         user_message: str,
         turn_span,
         turn_id: str,
+        *,
+        run_id: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         t_start = time.monotonic()
         log.info("══════ AgentLoop.run 开始, input_chars=%d ══════", len(user_message))
@@ -305,7 +317,11 @@ class AgentLoop:
                 "heaven.agent.history.persist",
                 parent=turn_span,
             ) as history_span:
-                self._record_history_turn(user_message, ctx.response)
+                self._record_history_turn(
+                    user_message,
+                    ctx.response,
+                    completed_run_id=run_id,
+                )
                 history_span.set_attribute(
                     "heaven.agent.history_turns", self._messages.conversation_turns
                 )
@@ -487,7 +503,11 @@ class AgentLoop:
             "heaven.agent.history.persist",
             parent=turn_span,
         ) as history_span:
-            self._record_history_turn(user_message, ctx.response)
+            self._record_history_turn(
+                user_message,
+                ctx.response,
+                completed_run_id=run_id,
+            )
             history_span.set_attribute(
                 "heaven.agent.history_turns", self._messages.conversation_turns
             )
@@ -555,19 +575,31 @@ class AgentLoop:
                 p.unlink()
                 log.info("对话历史文件已删除: %s", p)
 
-    def _persist_history(self) -> None:
+    def _persist_history(self, *, completed_run_id: str | None = None) -> None:
         if self._history_store is not None:
-            self._history_store.replace(self._messages.get_all())
+            if completed_run_id is None:
+                self._history_store.replace(self._messages.get_all())
+            else:
+                self._history_store.replace(
+                    self._messages.get_all(),
+                    completed_run_id=completed_run_id,
+                )
         elif self._history_path:
             self._messages.save_to_file(self._history_path)
 
-    def _record_history_turn(self, user_message: str, response: str) -> None:
+    def _record_history_turn(
+        self,
+        user_message: str,
+        response: str,
+        *,
+        completed_run_id: str | None = None,
+    ) -> None:
         """Keep memory and durable history aligned when persistence fails."""
         previous = self._messages.get_all()
         self._messages.add("user", user_message)
         self._messages.add("assistant", response)
         try:
-            self._persist_history()
+            self._persist_history(completed_run_id=completed_run_id)
         except Exception:
             self._messages.clear()
             for message in previous:

@@ -428,8 +428,11 @@ def _memory_references(memories: list[dict]) -> list[MemoryReference]:
 def _chat_run_manager(container: ApplicationContainer) -> ChatRunManager:
     manager = getattr(container, "chat_runs", None)
     if manager is None:
-        manager = ChatRunManager()
+        manager = ChatRunManager(
+            store=getattr(container, "conversation_store", None),
+        )
         setattr(container, "chat_runs", manager)
+    manager.resume(container.agent_loop)
     return manager
 
 

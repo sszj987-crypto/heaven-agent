@@ -99,7 +99,7 @@ class FakeAgent:
         }]
         return ctx
 
-    async def stream_once(self, message):
+    async def stream_once(self, message, *, run_id=None):
         yield {"type": "done", "context": await self.run_once(message)}
 
 
@@ -339,7 +339,7 @@ def test_chat_stream_response_includes_response_id():
 
 def test_chat_stream_reports_first_response_timing():
     class StreamingAgent(FakeAgent):
-        async def stream_once(self, message):
+        async def stream_once(self, message, *, run_id=None):
             yield {"type": "delta", "content": "测试"}
             yield {"type": "done", "context": await self.run_once(message)}
 
@@ -365,7 +365,7 @@ def test_background_chat_run_survives_the_start_request_and_appears_in_history()
             self.messages = []
             self.completed = False
 
-        async def stream_once(self, message):
+        async def stream_once(self, message, *, run_id=None):
             yield {"type": "delta", "content": "正在"}
             await asyncio.sleep(0.05)
             ctx = await self.run_once(message)
@@ -406,7 +406,7 @@ def test_background_chat_run_rejects_parallel_turn_and_supports_explicit_stop():
     class WaitingAgent(FakeAgent):
         messages = []
 
-        async def stream_once(self, _message):
+        async def stream_once(self, _message, *, run_id=None):
             yield {"type": "delta", "content": "等待"}
             await asyncio.Event().wait()
 
