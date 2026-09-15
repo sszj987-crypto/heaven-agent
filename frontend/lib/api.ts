@@ -390,6 +390,101 @@ export type ChatStreamEvent =
   | { type: "done"; response_id: string; response_text: string; instruct_text: string; has_voice: boolean; used_memories: MemoryReference[]; safety_state: ChatResponse["safetyState"]; timing?: { first_response_ms?: number | null; total_response_ms?: number } }
   | { type: "error"; message: string };
 
+export type ChatRunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface ChatRun {
+  runId: string;
+  responseId: string;
+  status: ChatRunStatus;
+  userMessage: string;
+  responseText: string;
+  hasVoice: boolean;
+  audioParams: { text: string; instructText: string };
+  usedMemories: MemoryReference[];
+  safetyState: ChatResponse["safetyState"];
+  timing: ChatResponse["timing"];
+  revision: number;
+  error?: string;
+}
+
+interface ChatRunWire {
+  run_id: string;
+  response_id: string;
+  status: ChatRunStatus;
+  user_message: string;
+  response_text?: string;
+  instruct_text?: string;
+  has_voice: boolean;
+  used_memories?: MemoryReference[];
+  safety_state?: ChatResponse["safetyState"];
+  timing?: { first_response_ms?: number | null; total_response_ms?: number };
+  revision?: number;
+  error?: string | null;
+}
+
+function parseChatRun(data: ChatRunWire): ChatRun {
+  return {
+    runId: data.run_id,
+    responseId: data.response_id,
+    status: data.status,
+    userMessage: data.user_message,
+    responseText: data.response_text || "",
+    hasVoice: data.has_voice,
+    audioParams: {
+      text: data.response_text || "",
+      instructText: data.instruct_text || "用平静自然的语气说话。",
+    },
+    usedMemories: data.used_memories || [],
+    safetyState: data.safety_state || "normal",
+    timing: {
+      firstResponseMs: data.timing?.first_response_ms ?? null,
+      totalResponseMs: data.timing?.total_response_ms ?? 0,
+    },
+    revision: data.revision || 0,
+    error: data.error || undefined,
+  };
+}
+
+export async function createChatRun(message: string): Promise<string> {
+  const res = await fetch(`${BASE}/chat/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) throw await apiError(res, "对话失败");
+  const data = await res.json();
+  return data.run_id;
+}
+
+export async function createVoiceChatRun(
+  audioBlob: Blob,
+  signal?: AbortSignal,
+): Promise<{ runId: string; transcript: string }> {
+  const formData = new FormData();
+  formData.append("audio", audioBlob, "recording.wav");
+  const res = await fetch(`${BASE}/chat/voice/runs`, {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+  if (!res.ok) throw await apiError(res, "语音识别失败");
+  const data = await res.json();
+  return { runId: data.run_id, transcript: data.transcript };
+}
+
+export async function fetchChatRun(runId: string): Promise<ChatRun> {
+  const res = await fetch(`${BASE}/chat/runs/${encodeURIComponent(runId)}`);
+  if (!res.ok) throw await apiError(res, "无法读取对话进度");
+  return parseChatRun(await res.json() as ChatRunWire);
+}
+
+export async function cancelChatRun(runId: string): Promise<void> {
+  const res = await fetch(`${BASE}/chat/runs/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 404) throw await apiError(res, "停止对话失败");
+}
+
 export async function streamTextMessage(
   message: string,
   onEvent: (event: ChatStreamEvent) => void,
@@ -527,11 +622,19 @@ export interface HistoryMessage {
   content: string;
 }
 
-export async function fetchHistory(): Promise<HistoryMessage[]> {
+export interface ChatHistory {
+  messages: HistoryMessage[];
+  activeRun?: ChatRun;
+}
+
+export async function fetchHistory(): Promise<ChatHistory> {
   const res = await fetch(`${BASE}/chat/history`);
-  if (!res.ok) return [];
+  if (!res.ok) return { messages: [] };
   const data = await res.json();
-  return data.messages || [];
+  return {
+    messages: data.messages || [],
+    activeRun: data.active_run ? parseChatRun(data.active_run as ChatRunWire) : undefined,
+  };
 }
 
 export async function deleteHistory(): Promise<void> {

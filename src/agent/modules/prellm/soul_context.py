@@ -1,5 +1,8 @@
+from dataclasses import asdict
+
 from ..base import PipelineModule
 from ...context import PipelineContext
+from ...context_budget import ContextBudgeter
 from ....config.logger import get_logger
 
 log = get_logger("soul_context")
@@ -13,6 +16,7 @@ class SoulContextModule(PipelineModule):
     _messages = None
     _builder = None
     _dialect_settings = None
+    _max_context_chars: int = 24_000
 
     @classmethod
     def set_deps(cls, soul_loader, message_manager):
@@ -21,6 +25,7 @@ class SoulContextModule(PipelineModule):
         cls._messages = message_manager
         cls._builder = None
         cls._dialect_settings = None
+        cls._max_context_chars = 24_000
 
     @property
     def _prompt_builder(self):
@@ -55,17 +60,40 @@ class SoulContextModule(PipelineModule):
 
         # 组装 messages: system + 历史消息 + 当前消息
         history = self._messages.get_all()
-        ctx.llm_messages = [{"role": "system", "content": ctx.system_prompt}]
-        ctx.llm_messages.extend(history)
         dialect_instruction = dialect.text_instruction if dialect is not None else ""
         ctx.dialect_text_instruction = dialect_instruction
-        if dialect_instruction:
-            # 方言约束贴近当前输入，避免被较长的人物资料和历史消息稀释。
-            ctx.llm_messages.append({"role": "system", "content": dialect_instruction})
-        ctx.llm_messages.append({"role": "user", "content": ctx.user_message})
+        budgeted = ContextBudgeter(self._max_context_chars).build(
+            system_prompt=ctx.system_prompt,
+            history=history,
+            current_user=ctx.user_message,
+            dialect_instruction=dialect_instruction,
+        )
+        ctx.llm_messages = budgeted.messages
+        ctx.context_budget = asdict(budgeted.stats)
+        selected_system = ctx.llm_messages[0]["content"]
+        memory_count_before_budget = len(ctx.retrieved_memories)
+        if budgeted.stats.system_compacted and ctx.retrieved_memories:
+            ctx.retrieved_memories = [
+                memory
+                for memory in ctx.retrieved_memories
+                if str(memory.get("document", "")) in selected_system
+            ]
+        ctx.context_budget["dropped_retrieved_memories"] = (
+            memory_count_before_budget - len(ctx.retrieved_memories)
+        )
         log.info("Soul Context 构建完成, system=%d chars, history=%d msgs, current_msg=%d chars, total_msgs=%d",
                  len(ctx.system_prompt), len(history), len(ctx.user_message), len(ctx.llm_messages))
-        # 仅记录结构与长度，避免私密内容进入日志。
+        log.info(
+            "上下文预算, max=%d, before=%d, after=%d, system_compacted=%s, "
+            "history_dropped=%d, overflow=%d",
+            budgeted.stats.max_chars,
+            budgeted.stats.input_chars,
+            budgeted.stats.output_chars,
+            budgeted.stats.system_compacted,
+            budgeted.stats.dropped_history_messages,
+            budgeted.stats.overflow_chars,
+        )
+        # 此处记录预算结构；LLM client 会在 DEBUG 下输出实际发送的完整正文。
         if log.isEnabledFor(10):
             log.debug("── LLM 输入结构（total=%d msgs）──", len(ctx.llm_messages))
             log.debug(

@@ -30,6 +30,7 @@ class PipelineContext:
     system_prompt: str = ""
     dialect_text_instruction: str = ""
     llm_messages: list[dict] = field(default_factory=list)
+    context_budget: dict = field(default_factory=dict)
     retrieved_memories: list[dict] = field(default_factory=list)  # MemoryRetrieveModule 产出
 
     # LLM 产出

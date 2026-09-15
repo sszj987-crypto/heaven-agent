@@ -3,6 +3,7 @@ import asyncio
 import io
 import json
 import tempfile
+import time
 import wave
 from pathlib import Path
 
@@ -358,6 +359,72 @@ def test_chat_stream_reports_first_response_timing():
     assert done["timing"]["total_response_ms"] >= done["timing"]["first_response_ms"]
 
 
+def test_background_chat_run_survives_the_start_request_and_appears_in_history():
+    class DelayedAgent(FakeAgent):
+        def __init__(self):
+            self.messages = []
+            self.completed = False
+
+        async def stream_once(self, message):
+            yield {"type": "delta", "content": "正在"}
+            await asyncio.sleep(0.05)
+            ctx = await self.run_once(message)
+            self.messages = [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": ctx.response},
+            ]
+            self.completed = True
+            yield {"type": "done", "context": ctx}
+
+    client, container = make_client()
+    container.agent_loop = DelayedAgent()
+    with client:
+        accepted = client.post("/chat/runs", json={"message": "切换页面"})
+        assert accepted.status_code == 202
+        assert container.agent_loop.completed is False
+
+        run_id = accepted.json()["run_id"]
+        active_history = client.get("/chat/history").json()
+        assert active_history["active_run"]["run_id"] == run_id
+        assert active_history["active_run"]["user_message"] == "切换页面"
+
+        time.sleep(0.08)
+        completed = client.get(f"/chat/runs/{run_id}")
+        history = client.get("/chat/history").json()
+
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["response_text"] == "测试回复"
+    assert history["active_run"] is None
+    assert history["messages"] == [
+        {"role": "user", "content": "切换页面"},
+        {"role": "assistant", "content": "测试回复"},
+    ]
+
+
+def test_background_chat_run_rejects_parallel_turn_and_supports_explicit_stop():
+    class WaitingAgent(FakeAgent):
+        messages = []
+
+        async def stream_once(self, _message):
+            yield {"type": "delta", "content": "等待"}
+            await asyncio.Event().wait()
+
+    client, container = make_client()
+    container.agent_loop = WaitingAgent()
+    with client:
+        first = client.post("/chat/runs", json={"message": "第一条"})
+        run_id = first.json()["run_id"]
+        second = client.post("/chat/runs", json={"message": "第二条"})
+        stopped = client.delete(f"/chat/runs/{run_id}")
+        state = client.get(f"/chat/runs/{run_id}")
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert stopped.status_code == 204
+    assert state.json()["status"] == "cancelled"
+
+
 def test_voice_chat_response_includes_response_id(monkeypatch):
     client, container = make_client()
     container.voice_installed = True
@@ -375,6 +442,30 @@ def test_voice_chat_response_includes_response_id(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["response_id"].startswith("reply_")
+
+
+def test_voice_chat_can_start_connection_independent_reply_generation(monkeypatch):
+    client, container = make_client()
+    container.voice_installed = True
+
+    class SuccessfulASR:
+        async def transcribe(self, _audio):
+            return "语音转写"
+
+    monkeypatch.setattr("src.api.chat_routes.create_asr_service", lambda: SuccessfulASR())
+    with client:
+        accepted = client.post(
+            "/chat/voice/runs",
+            files={"audio": ("voice.wav", b"RIFFdata", "audio/wav")},
+        )
+        run_id = accepted.json()["run_id"]
+        time.sleep(0.02)
+        run = client.get(f"/chat/runs/{run_id}")
+
+    assert accepted.status_code == 202
+    assert accepted.json()["transcript"] == "语音转写"
+    assert run.json()["status"] == "completed"
+    assert run.json()["user_message"] == "语音转写"
 
 
 def test_voice_dialect_api_persists_cantonese_and_reports_provider_fallback(tmp_path):

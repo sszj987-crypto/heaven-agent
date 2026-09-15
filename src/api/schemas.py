@@ -53,6 +53,29 @@ class ChatResponse(APIModel):
     timing: ChatTiming = Field(default_factory=ChatTiming)
 
 
+class ChatRunAccepted(APIModel):
+    run_id: str
+
+
+class VoiceChatRunAccepted(ChatRunAccepted):
+    transcript: str
+
+
+class ChatRunView(APIModel):
+    run_id: str
+    response_id: str
+    status: Literal["pending", "running", "completed", "failed", "cancelled"]
+    user_message: str
+    response_text: str = ""
+    instruct_text: str = ""
+    has_voice: bool = False
+    used_memories: list[MemoryReference] = Field(default_factory=list)
+    safety_state: SafetyState = "normal"
+    timing: ChatTiming = Field(default_factory=ChatTiming)
+    revision: int = 0
+    error: str | None = None
+
+
 class ChatFeedbackUpdate(APIModel):
     user_message: str = Field(min_length=1, max_length=10_000)
     response_text: str = Field(min_length=1, max_length=10_000)
@@ -389,3 +412,4 @@ class MemoryStatsView(APIModel):
 
 class ChatHistoryView(APIModel):
     messages: list[dict[str, str]]
+    active_run: ChatRunView | None = None

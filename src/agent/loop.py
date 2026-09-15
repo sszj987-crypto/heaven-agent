@@ -332,6 +332,27 @@ class AgentLoop:
             prellm_span.set_attribute(
                 "heaven.agent.retrieved_memory_count", len(ctx.retrieved_memories)
             )
+            if ctx.context_budget:
+                prellm_span.set_attribute(
+                    "heaven.agent.context.input_chars",
+                    ctx.context_budget.get("input_chars", 0),
+                )
+                prellm_span.set_attribute(
+                    "heaven.agent.context.output_chars",
+                    ctx.context_budget.get("output_chars", 0),
+                )
+                prellm_span.set_attribute(
+                    "heaven.agent.context.dropped_history_messages",
+                    ctx.context_budget.get("dropped_history_messages", 0),
+                )
+                prellm_span.set_attribute(
+                    "heaven.agent.context.system_compacted",
+                    ctx.context_budget.get("system_compacted", False),
+                )
+                prellm_span.set_attribute(
+                    "heaven.agent.context.overflow_chars",
+                    ctx.context_budget.get("overflow_chars", 0),
+                )
         if safety.state == "supportive_redirect":
             supportive_message = {
                 "role": "system",

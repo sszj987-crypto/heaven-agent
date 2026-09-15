@@ -8,7 +8,8 @@
     "crunch_interval": 10,
     "compress_keep_recent": 6,
     "max_conversation_turns": 20,
-    "max_regenerate": 2
+    "max_regenerate": 2,
+    "max_context_chars": 32000
   },
   "distill": {
     "max_retries": 2

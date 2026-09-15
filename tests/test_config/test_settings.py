@@ -76,6 +76,15 @@ class TestSettings:
         Settings.init(self._config_dir)
         assert Settings.get().circumstances == ""
 
+    def test_context_budget_loads_from_pipeline_settings(self):
+        app = json.loads((self._config_dir / "app.json").read_text())
+        app["pipeline"] = {"max_context_chars": 32_000}
+        (self._config_dir / "app.json").write_text(json.dumps(app))
+
+        settings = Settings.init(self._config_dir)
+
+        assert settings.max_context_chars == 32_000
+
     def test_update_llm_writes_back(self):
         Settings.init(self._config_dir)
         Settings.get().update_llm(api_key="new-key", model="gpt-4o-mini")

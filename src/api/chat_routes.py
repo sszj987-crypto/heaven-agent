@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response as FastAPIResponse, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 import json
 import time
@@ -7,6 +7,7 @@ import uuid
 from ..agent.context import TTSConfig
 from ..config.logger import get_logger
 from ..services.container import ApplicationContainer
+from ..services.chat_runs import ChatRun, ChatRunInProgress, ChatRunManager
 from ..voice.asr import create_asr_service
 from ..voice.service import VoiceUnavailable
 from ..voice.minimax import MiniMaxError
@@ -23,8 +24,11 @@ from .schemas import (
     ChatTiming,
     ChatRequest,
     ChatResponse,
+    ChatRunAccepted,
+    ChatRunView,
     MemoryReference,
     RecoverableDeleteView,
+    VoiceChatRunAccepted,
 )
 
 
@@ -71,7 +75,57 @@ async def get_chat_feedback_stats(
 async def get_chat_history(container: ApplicationContainer = Depends(get_container)):
     history = container.agent_loop.messages
     log.info("对话历史返回, messages=%d", len(history))
-    return {"messages": history}
+    active = _chat_run_manager(container).active()
+    return {
+        "messages": history,
+        "active_run": _chat_run_view(active, container) if active else None,
+    }
+
+
+@router.post(
+    "/chat/runs",
+    response_model=ChatRunAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_chat_run(
+    body: ChatRequest,
+    container: ApplicationContainer = Depends(get_container),
+):
+    """Start a turn owned by the server rather than by an HTTP connection."""
+    user_message = body.message.strip()
+    _require_llm_settings(container)
+    try:
+        run = _chat_run_manager(container).start(user_message, container.agent_loop)
+    except ChatRunInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"已有对话正在生成：{exc.run_id}",
+        ) from exc
+    return {"run_id": run.id}
+
+
+@router.get("/chat/runs/{run_id}", response_model=ChatRunView)
+async def get_chat_run(
+    run_id: str,
+    container: ApplicationContainer = Depends(get_container),
+):
+    try:
+        run = _chat_run_manager(container).get(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="对话任务不存在") from exc
+    return _chat_run_view(run, container)
+
+
+@router.delete("/chat/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_chat_run(
+    run_id: str,
+    container: ApplicationContainer = Depends(get_container),
+):
+    try:
+        await _chat_run_manager(container).cancel(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="对话任务不存在") from exc
+    return FastAPIResponse(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/chat/history", response_model=RecoverableDeleteView)
@@ -168,6 +222,53 @@ async def chat_voice(
     container: ApplicationContainer = Depends(get_container),
 ):
     started = time.monotonic()
+    text = await _transcribe_voice_upload(audio, container)
+    if hasattr(container.voice, "unavailable_reason"):
+        raise HTTPException(status_code=503, detail=container.voice.unavailable_reason)
+    try:
+        ctx = await container.agent_loop.run_once(text)
+    except Exception as exc:
+        raise _llm_http_error(exc, container.settings.llm.provider) from exc
+
+    response_text = ctx.response
+    instruct_text = ctx.instruct_text or "用平静自然的语气说话。"
+    return ChatResponse(
+        response_id=_new_response_id(),
+        response_text=response_text,
+        instruct_text=instruct_text,
+        has_voice=_voice_available(container),
+        transcript=text,
+        used_memories=_memory_references(ctx.retrieved_memories),
+        safety_state=ctx.safety_state,
+        timing=ChatTiming(total_response_ms=_elapsed_ms(started)),
+    )
+
+
+@router.post(
+    "/chat/voice/runs",
+    response_model=VoiceChatRunAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_voice_chat_run(
+    audio: UploadFile = File(...),
+    container: ApplicationContainer = Depends(get_container),
+):
+    """Transcribe the upload, then hand reply generation to a background run."""
+    text = await _transcribe_voice_upload(audio, container)
+    try:
+        run = _chat_run_manager(container).start(text, container.agent_loop)
+    except ChatRunInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"已有对话正在生成：{exc.run_id}",
+        ) from exc
+    return {"run_id": run.id, "transcript": text}
+
+
+async def _transcribe_voice_upload(
+    audio: UploadFile,
+    container: ApplicationContainer,
+) -> str:
     if not container.voice_installed:
         raise HTTPException(status_code=503, detail="语音组件未安装，请使用文字对话或安装语音组件")
     _require_llm_settings(container)
@@ -192,26 +293,7 @@ async def chat_voice(
         raise HTTPException(status_code=500, detail="语音识别失败，请稍后重试") from exc
     if not text.strip():
         raise HTTPException(status_code=400, detail="未能识别到语音内容，请重试")
-
-    if hasattr(container.voice, "unavailable_reason"):
-        raise HTTPException(status_code=503, detail=container.voice.unavailable_reason)
-    try:
-        ctx = await container.agent_loop.run_once(text)
-    except Exception as exc:
-        raise _llm_http_error(exc, container.settings.llm.provider) from exc
-
-    response_text = ctx.response
-    instruct_text = ctx.instruct_text or "用平静自然的语气说话。"
-    return ChatResponse(
-        response_id=_new_response_id(),
-        response_text=response_text,
-        instruct_text=instruct_text,
-        has_voice=_voice_available(container),
-        transcript=text,
-        used_memories=_memory_references(ctx.retrieved_memories),
-        safety_state=ctx.safety_state,
-        timing=ChatTiming(total_response_ms=_elapsed_ms(started)),
-    )
+    return text
 
 
 @router.post("/chat/audio")
@@ -341,3 +423,31 @@ def _memory_references(memories: list[dict]) -> list[MemoryReference]:
         )
         for item in memories
     ]
+
+
+def _chat_run_manager(container: ApplicationContainer) -> ChatRunManager:
+    manager = getattr(container, "chat_runs", None)
+    if manager is None:
+        manager = ChatRunManager()
+        setattr(container, "chat_runs", manager)
+    return manager
+
+
+def _chat_run_view(run: ChatRun, container: ApplicationContainer) -> ChatRunView:
+    return ChatRunView(
+        run_id=run.id,
+        response_id=run.response_id,
+        status=run.status,
+        user_message=run.user_message,
+        response_text=run.response_text,
+        instruct_text=run.instruct_text or "用平静自然的语气说话。",
+        has_voice=_voice_available(container),
+        used_memories=_memory_references(run.retrieved_memories),
+        safety_state=run.safety_state,
+        timing=ChatTiming(
+            first_response_ms=run.first_response_ms,
+            total_response_ms=run.total_response_ms,
+        ),
+        revision=run.revision,
+        error=run.error,
+    )

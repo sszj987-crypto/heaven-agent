@@ -3,15 +3,18 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
+  cancelChatRun,
+  createChatRun,
+  createVoiceChatRun,
   deleteHistory,
   fetchAudio,
+  fetchChatRun,
   fetchHistory,
   fetchSettings,
   saveChatFeedback,
+  type ChatRun,
   type TTSSettings,
   type FeedbackReason,
-  streamTextMessage,
-  sendVoiceMessage,
 } from "@/lib/api";
 import {
   createAssistantMessage,
@@ -35,9 +38,16 @@ function requestError(error: unknown, fallback: string): string {
 
 type ActiveRequest = {
   id: string;
-  abort: AbortController;
+  abort?: AbortController;
+  runId?: string;
   messageIds: string[];
 };
+
+const CHAT_RUN_POLL_MS = 120;
+
+function waitForNextPoll(): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, CHAT_RUN_POLL_MS));
+}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -63,12 +73,88 @@ export default function ChatPage() {
     )),
   }, undefined, getSharedChatAudioCache()), []);
 
+  const watchTextRun = useCallback(async (
+    request: ActiveRequest,
+    userMessage: string,
+    assistantMessageId: string,
+    epoch: number,
+  ) => {
+    if (!request.runId) return;
+    let lastRevision = -1;
+    while (
+      epoch === epochRef.current
+      && activeRequestRef.current?.id === request.id
+    ) {
+      let run: ChatRun;
+      try {
+        run = await fetchChatRun(request.runId);
+      } catch (error) {
+        if (
+          epoch === epochRef.current
+          && activeRequestRef.current?.id === request.id
+        ) {
+          setInteractionError(requestError(error, "无法读取回复进度，正在自动重试"));
+          await waitForNextPoll();
+          continue;
+        }
+        return;
+      }
+      if (
+        epoch !== epochRef.current
+        || activeRequestRef.current?.id !== request.id
+      ) return;
+      setInteractionError("");
+
+      if (run.revision !== lastRevision) {
+        lastRevision = run.revision;
+        setMessages(current => current.map(message => (
+          message.id === assistantMessageId
+            ? { ...message, content: run.responseText }
+            : message
+        )));
+      }
+
+      if (run.status === "completed") {
+        setMessages(current => current.map(message => message.id === assistantMessageId
+          ? {
+            ...createAssistantMessage({
+              responseId: run.responseId,
+              responseText: run.responseText,
+              hasVoice: run.hasVoice,
+              audioParams: run.audioParams,
+              usedMemories: run.usedMemories,
+              safetyState: run.safetyState,
+              timing: run.timing,
+            }, userMessage),
+            id: assistantMessageId,
+          }
+          : message));
+        activeRequestRef.current = null;
+        setPhase("idle");
+        return;
+      }
+      if (run.status === "failed" || run.status === "cancelled") {
+        setMessages(current => current.filter(message => (
+          !request.messageIds.includes(message.id || "")
+        )));
+        if (run.status === "failed") {
+          setInteractionError("回复失败，请重试");
+        }
+        activeRequestRef.current = null;
+        setPhase("idle");
+        return;
+      }
+      await waitForNextPoll();
+    }
+  }, []);
+
   useEffect(() => {
     const conversationEpoch = epochRef;
     audioSessionRef.current = newAudioSession();
     return () => {
       conversationEpoch.current++;
-      activeRequestRef.current?.abort.abort();
+      // Leaving the page only detaches UI updates. The server-owned chat run
+      // continues and will be restored from /chat/history on return.
       activeRequestRef.current = null;
       pressingRef.current = false;
       const recorder = mediaRecorderRef.current;
@@ -91,7 +177,8 @@ export default function ChatPage() {
     fetchHistory()
       .then((history) => {
         if (cancelled || epoch !== epochRef.current) return;
-        const restored: Message[] = history
+        const hadLocalRequest = activeRequestRef.current !== null;
+        const restored: Message[] = history.messages
           .filter((message) => message.role === "user" || message.role === "assistant")
           .map((message) => ({
             id: crypto.randomUUID(),
@@ -104,11 +191,45 @@ export default function ChatPage() {
               })()
               : {}),
           }));
-        if (restored.length > 0) {
+        if (history.activeRun) {
+          const userMessageId = crypto.randomUUID();
+          const assistantMessageId = crypto.randomUUID();
+          const request: ActiveRequest = {
+            id: crypto.randomUUID(),
+            runId: history.activeRun.runId,
+            messageIds: [userMessageId, assistantMessageId],
+          };
+          restored.push(
+            {
+              id: userMessageId,
+              role: "user",
+              content: history.activeRun.userMessage,
+            },
+            {
+              id: assistantMessageId,
+              role: "assistant",
+              content: history.activeRun.responseText,
+            },
+          );
+          activeRequestRef.current = request;
+          setPhase("replying");
+          void watchTextRun(
+            request,
+            history.activeRun.userMessage,
+            assistantMessageId,
+            epoch,
+          );
+        } else if (!hadLocalRequest) {
+          activeRequestRef.current = null;
+          setPhase("idle");
+        }
+        if (!hadLocalRequest) {
+          setMessages(restored);
+        }
+        if (restored.length > 0 && !hadLocalRequest) {
           // A remounted chat page should resume at the newest message, not the
           // first item in the restored history.
           shouldRestoreLatestPositionRef.current = true;
-          setMessages(current => current.length ? current : restored);
         }
       })
       .catch(() => undefined);
@@ -120,7 +241,7 @@ export default function ChatPage() {
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, []);
+  }, [watchTextRun]);
 
   useLayoutEffect(() => {
     if (!shouldRestoreLatestPositionRef.current) return;
@@ -143,14 +264,18 @@ export default function ChatPage() {
     if (message) await audioSessionRef.current?.play(message);
   }, [messages]);
 
-  const cancelActiveRequest = useCallback(() => {
+  const cancelActiveRequest = useCallback(async () => {
     const active = activeRequestRef.current;
     if (!active) return;
     activeRequestRef.current = null;
-    active.abort.abort();
+    active.abort?.abort();
     setMessages(current => current.filter(message => !active.messageIds.includes(message.id || "")));
     setInteractionError("");
-    setPhase("idle");
+    try {
+      if (active.runId) await cancelChatRun(active.runId);
+    } finally {
+      setPhase("idle");
+    }
   }, []);
 
   const handleSendText = useCallback(async () => {
@@ -164,9 +289,8 @@ export default function ChatPage() {
     setMessages((current) => [...current, { id: userMessageId, role: "user", content: text }]);
     setPhase("replying");
     const messageId = crypto.randomUUID();
-    const request = {
+    const request: ActiveRequest = {
       id: crypto.randomUUID(),
-      abort: new AbortController(),
       messageIds: [userMessageId, messageId],
     };
     activeRequestRef.current = request;
@@ -177,31 +301,20 @@ export default function ChatPage() {
         role: "assistant",
         content: "",
       }]);
-      const response = await streamTextMessage(text, (event) => {
-        if (epoch !== epochRef.current || activeRequestRef.current?.id !== request.id) return;
-        setMessages((current) => current.map((message) => {
-          if (message.id !== messageId) return message;
-          if (event.type === "delta") return { ...message, content: message.content + event.content };
-          if (event.type === "reset") return { ...message, content: "" };
-          return message;
-        }));
-      }, request.abort.signal);
+      request.runId = await createChatRun(text);
       if (epoch !== epochRef.current || activeRequestRef.current?.id !== request.id) return;
-      setMessages((current) => current.map((message) => message.id === messageId
-        ? { ...createAssistantMessage(response, text), id: messageId }
-        : message));
+      await watchTextRun(request, text, messageId, epoch);
     } catch (error) {
       if (epoch === epochRef.current && activeRequestRef.current?.id === request.id) {
-        setMessages((current) => current.filter((message) => message.id !== messageId));
+        setMessages((current) => current.filter((message) => (
+          !request.messageIds.includes(message.id || "")
+        )));
         setInteractionError(requestError(error, "回复失败，请重试"));
-      }
-    } finally {
-      if (epoch === epochRef.current && activeRequestRef.current?.id === request.id) {
         activeRequestRef.current = null;
         setPhase("idle");
       }
     }
-  }, [input, phase]);
+  }, [input, phase, watchTextRun]);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -261,20 +374,32 @@ export default function ChatPage() {
           return;
         }
 
-        const request = {
+        const userMessageId = crypto.randomUUID();
+        const assistantMessageId = crypto.randomUUID();
+        const abort = new AbortController();
+        const request: ActiveRequest = {
           id: crypto.randomUUID(),
-          abort: new AbortController(),
-          messageIds: [],
+          abort,
+          messageIds: [userMessageId, assistantMessageId],
         };
         activeRequestRef.current = request;
         try {
-          const response = await sendVoiceMessage(audioBlob, request.abort.signal);
+          const accepted = await createVoiceChatRun(audioBlob, abort.signal);
+          request.runId = accepted.runId;
+          request.abort = undefined;
           if (epoch !== epochRef.current || activeRequestRef.current?.id !== request.id) return;
           setMessages((current) => [
             ...current,
-            { role: "user", content: response.transcript || "[未能显示语音转写]" },
-            createAssistantMessage(response, response.transcript),
+            { id: userMessageId, role: "user", content: accepted.transcript || "[未能显示语音转写]" },
+            { id: assistantMessageId, role: "assistant", content: "" },
           ]);
+          setPhase("replying");
+          await watchTextRun(
+            request,
+            accepted.transcript,
+            assistantMessageId,
+            epoch,
+          );
         } catch (error) {
           if (epoch === epochRef.current && activeRequestRef.current?.id === request.id) {
             setInteractionError(requestError(error, "语音识别失败，请重试"));
@@ -297,7 +422,7 @@ export default function ChatPage() {
       setPhase("idle");
       setInteractionError(requestError(error, "无法访问麦克风，请检查浏览器权限"));
     }
-  }, [phase]);
+  }, [phase, watchTextRun]);
 
   const stopRecording = useCallback(() => {
     pressingRef.current = false;
@@ -311,7 +436,7 @@ export default function ChatPage() {
     if (!confirm("确定要清空当前对话吗？原记录会归档到本地回收目录，可手工恢复。")) return;
     const epoch = epochRef.current;
     try {
-      cancelActiveRequest();
+      await cancelActiveRequest();
       await deleteHistory();
       if (epoch !== epochRef.current) return;
       epochRef.current++;
@@ -573,7 +698,7 @@ export default function ChatPage() {
         {phase === "replying" || phase === "transcribing" ? (
           <button
             type="button"
-            onClick={cancelActiveRequest}
+            onClick={() => void cancelActiveRequest()}
             aria-label="停止当前回复"
             title="停止"
             className="shrink-0 w-10 h-10 rounded-full bg-red-400/20 text-red-100 hover:bg-red-400/30 flex items-center justify-center transition-all"

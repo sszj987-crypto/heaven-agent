@@ -22,6 +22,7 @@ from ..voice.minimax import MiniMaxTTSService
 from ..voice.openai_compatible import OpenAICompatibleTTSService
 from ..voice.dialect import DialectSettings
 from .candidates import CandidateService
+from .chat_runs import ChatRunManager
 from .data_management import DataManagementService
 from .feedback import FeedbackStore
 from .imports import ImportReviewService
@@ -54,6 +55,7 @@ class ApplicationContainer:
     data_management: DataManagementService
     voice_installation: VoiceInstallationService
     dialect_settings: DialectSettings
+    chat_runs: ChatRunManager
     _retired_llms: list[Any] = field(default_factory=list, repr=False)
     _retired_voices: list[Any] = field(default_factory=list, repr=False)
     soul_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -93,6 +95,7 @@ class ApplicationContainer:
         voice_installed, _ = voice_dependencies_available(sys.platform, root)
         voice = _create_selected_voice(settings, layout.voice_dir, root, settings.soul_id)
         dialect_settings = DialectSettings(layout.dialect_path)
+        chat_runs = ChatRunManager()
         conversation_store = ConversationStore(layout.conversation_db_path)
         conversation_store.migrate_json_once(layout.conversation_path)
         pipeline = Pipeline()
@@ -159,6 +162,7 @@ class ApplicationContainer:
             data_management=data_management,
             voice_installation=voice_installation,
             dialect_settings=dialect_settings,
+            chat_runs=chat_runs,
         )
 
     async def replace_llm(self, replacement: Any | None = None) -> None:
@@ -215,6 +219,9 @@ class ApplicationContainer:
                 return backup
 
     async def close(self) -> None:
+        chat_runs = getattr(self, "chat_runs", None)
+        if chat_runs is not None:
+            await chat_runs.shutdown()
         await self.jobs.shutdown()
         clients = [self.llm, *self._retired_llms]
         seen: set[int] = set()

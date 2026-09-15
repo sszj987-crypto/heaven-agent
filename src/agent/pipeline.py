@@ -109,6 +109,7 @@ class Pipeline:
         soul_module._messages = message_manager
         soul_module._builder = None
         soul_module._dialect_settings = dialect_settings
+        soul_module._max_context_chars = getattr(settings, "max_context_chars", 24_000)
 
         retrieve_module = by_type[MemoryRetrieveModule]
         retrieve_module._store = memory_store

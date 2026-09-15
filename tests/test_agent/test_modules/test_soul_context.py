@@ -124,3 +124,19 @@ class TestSoulContextModule:
         assert "方言模式：粤语" in dialect_message
         assert "方言模式：粤语" not in ctx.system_prompt
         assert ctx.dialect_text_instruction == dialect_message
+
+    @pytest.mark.asyncio
+    async def test_context_budget_limits_request_without_mutating_history(self):
+        original_history = [
+            {"role": "user", "content": "旧问题" * 500},
+            {"role": "assistant", "content": "旧回答" * 500},
+        ]
+        self._mock_messages.get_all.return_value = original_history
+        self._module._max_context_chars = 2_000
+
+        ctx = await self._module.process(PipelineContext(user_message="当前问题"))
+
+        assert sum(len(message["content"]) for message in ctx.llm_messages) <= 2_000
+        assert ctx.llm_messages[-1]["content"] == "当前问题"
+        assert ctx.context_budget["dropped_history_messages"] == 2
+        assert self._mock_messages.get_all.return_value == original_history

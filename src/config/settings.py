@@ -83,6 +83,10 @@ class Settings:
         return self._config.max_regenerate
 
     @property
+    def max_context_chars(self) -> int:
+        return self._config.max_context_chars
+
+    @property
     def distill_max_retries(self) -> int:
         return self._config.distill_max_retries
 
@@ -195,6 +199,7 @@ class Settings:
                 "compress_keep_recent": self._config.compress_keep_recent,
                 "max_conversation_turns": self._config.max_conversation_turns,
                 "max_regenerate": self._config.max_regenerate,
+                "max_context_chars": self._config.max_context_chars,
             },
             "distill": {
                 "max_retries": self._config.distill_max_retries,

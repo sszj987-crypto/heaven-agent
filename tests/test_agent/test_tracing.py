@@ -15,6 +15,13 @@ class TracePipeline:
     async def run_prellm(self, ctx):
         ctx.llm_messages = [{"role": "user", "content": ctx.user_message}]
         ctx.retrieved_memories = [{"id": "memory-1"}]
+        ctx.context_budget = {
+            "input_chars": 120,
+            "output_chars": 80,
+            "dropped_history_messages": 2,
+            "system_compacted": True,
+            "overflow_chars": 0,
+        }
         return ctx
 
     async def run_postllm(self, ctx):
@@ -76,6 +83,12 @@ async def test_turn_trace_covers_agent_stages_without_recording_content():
     assert by_name["heaven.agent.prellm"].attributes[
         "heaven.agent.retrieved_memory_count"
     ] == 1
+    assert by_name["heaven.agent.prellm"].attributes[
+        "heaven.agent.context.dropped_history_messages"
+    ] == 2
+    assert by_name["heaven.agent.prellm"].attributes[
+        "heaven.agent.context.system_compacted"
+    ] is True
     assert by_name["heaven.agent.llm.generate"].attributes[
         "gen_ai.request.model"
     ] == "local-test-model"

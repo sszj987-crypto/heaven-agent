@@ -18,6 +18,7 @@ let history = Array.from({ length: 24 }, (_, index) => ({
     ? `演示回复 ${index}：这些是用于检查布局的虚构文字。${"把值得记住的小事慢慢整理下来。".repeat(10)}`
     : `演示问题 ${index}：我们聊一聊今天的事情吧。`,
 }));
+const chatRuns = new Map();
 
 const server = createServer(async (request, response) => {
   response.setHeader("Access-Control-Allow-Origin", "http://localhost:3337");
@@ -61,7 +62,7 @@ const server = createServer(async (request, response) => {
   }
   if (route === "POST /settings/test-llm") return json({ connected: true });
   if (route === "POST /settings/test-tts") return json({ code: "test_unavailable", message: "语音服务暂时不可用，请稍后重试", retryable: true, request_id: "fixture-tts" }, 503);
-  if (route === "GET /chat/history") return json({ messages: history });
+  if (route === "GET /chat/history") return json({ messages: history, active_run: null });
   if (route === "DELETE /chat/history") {
     history = [];
     return json({ status: "ok" });
@@ -75,6 +76,40 @@ const server = createServer(async (request, response) => {
       used_memories: [{ id: "fixture-memory-1", content: "演示资料：喜欢在傍晚散步。", dimension: "basic_info", source_type: "manual" }],
       safety_state: "normal",
     });
+  }
+  if (route === "POST /chat/runs") {
+    const runId = `chat_fixture_${chatRuns.size + 1}`;
+    const responseText = `这是一条异步演示回复。${"记忆里的每一件小事，都可以慢慢说。".repeat(8)}`;
+    const run = {
+      run_id: runId,
+      response_id: `reply_fixture_${chatRuns.size + 1}`,
+      status: "completed",
+      user_message: body.message,
+      response_text: responseText,
+      instruct_text: "自然地说",
+      has_voice: true,
+      used_memories: [],
+      safety_state: "normal",
+      timing: { first_response_ms: 20, total_response_ms: 80 },
+      revision: 2,
+      error: null,
+    };
+    chatRuns.set(runId, run);
+    history.push(
+      { role: "user", content: body.message },
+      { role: "assistant", content: responseText },
+    );
+    return json({ run_id: runId }, 202);
+  }
+  const chatRunMatch = request.url?.match(/^\/chat\/runs\/([^/]+)$/);
+  if (request.method === "GET" && chatRunMatch) {
+    const run = chatRuns.get(decodeURIComponent(chatRunMatch[1]));
+    return run ? json(run) : json({ message: "对话任务不存在" }, 404);
+  }
+  if (request.method === "DELETE" && chatRunMatch) {
+    chatRuns.delete(decodeURIComponent(chatRunMatch[1]));
+    response.writeHead(204);
+    return response.end();
   }
   if (route === "POST /chat/audio") {
     calls.push({ route });
