@@ -130,6 +130,7 @@ class AgentLoop:
         *,
         llm=None,
         pipeline=None,
+        history_store=None,
         max_conversation_turns: int | None = None,
         max_regenerate: int | None = None,
         safety_policy=None,
@@ -149,6 +150,7 @@ class AgentLoop:
         turns = max_conversation_turns if max_conversation_turns is not None else settings.max_conversation_turns
         self._messages = MessageManager(max_turns=turns)
         self._history_path = history_path
+        self._history_store = history_store
         self._max_regenerate = max_regenerate if max_regenerate is not None else settings.max_regenerate
         self._turn_lock = asyncio.Lock()
         if safety_policy is None:
@@ -161,7 +163,15 @@ class AgentLoop:
         self._narrative_policy = narrative_policy
         self._tracer = tracer or get_agent_tracer()
 
-        if history_path:
+        if history_store is not None:
+            for message in history_store.load():
+                self._messages.add(message["role"], message["content"])
+            if self._messages.get_all():
+                log.info(
+                    "对话历史已从 SQLite 恢复, 轮数=%d",
+                    self._messages.conversation_turns,
+                )
+        elif history_path:
             loaded = self._messages.load_from_file(history_path)
             if loaded:
                 log.info("对话历史已从磁盘恢复, 轮数=%d", self._messages.conversation_turns)
@@ -295,10 +305,7 @@ class AgentLoop:
                 "heaven.agent.history.persist",
                 parent=turn_span,
             ) as history_span:
-                self._messages.add("user", user_message)
-                self._messages.add("assistant", ctx.response)
-                if self._history_path:
-                    self._messages.save_to_file(self._history_path)
+                self._record_history_turn(user_message, ctx.response)
                 history_span.set_attribute(
                     "heaven.agent.history_turns", self._messages.conversation_turns
                 )
@@ -459,10 +466,7 @@ class AgentLoop:
             "heaven.agent.history.persist",
             parent=turn_span,
         ) as history_span:
-            self._messages.add("user", user_message)
-            self._messages.add("assistant", ctx.response)
-            if self._history_path:
-                self._messages.save_to_file(self._history_path)
+            self._record_history_turn(user_message, ctx.response)
             history_span.set_attribute(
                 "heaven.agent.history_turns", self._messages.conversation_turns
             )
@@ -520,13 +524,35 @@ class AgentLoop:
         return self._messages.get_all()
 
     def delete_history(self) -> None:
-        """清空内存中的对话历史，并删除磁盘上的 conversation.json"""
+        """清空内存和持久化的活动对话历史。"""
         self._messages.clear()
+        if self._history_store is not None:
+            self._history_store.clear()
         if self._history_path:
             p = Path(self._history_path)
             if p.exists():
                 p.unlink()
                 log.info("对话历史文件已删除: %s", p)
+
+    def _persist_history(self) -> None:
+        if self._history_store is not None:
+            self._history_store.replace(self._messages.get_all())
+        elif self._history_path:
+            self._messages.save_to_file(self._history_path)
+
+    def _record_history_turn(self, user_message: str, response: str) -> None:
+        """Keep memory and durable history aligned when persistence fails."""
+        previous = self._messages.get_all()
+        self._messages.add("user", user_message)
+        self._messages.add("assistant", response)
+        try:
+            self._persist_history()
+        except Exception:
+            self._messages.clear()
+            for message in previous:
+                self._messages.add(message["role"], message["content"])
+            log.error("对话持久化失败，已回滚本轮内存历史")
+            raise
 
     def update_circumstances(self, circumstances: str):
         self._pipeline.update_circumstances(circumstances)

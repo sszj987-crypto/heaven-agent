@@ -1,4 +1,5 @@
 import io
+import json
 import zipfile
 
 from src.data.layout import SoulDataLayout
@@ -11,6 +12,7 @@ def test_export_contains_current_soul_files_with_scoped_paths(tmp_path):
     layout.initialize()
     (layout.profile_dir / "basic_info.md").write_text("姓名：小安", encoding="utf-8")
     layout.conversation_path.write_text("[]", encoding="utf-8")
+    layout.conversation_db_path.write_bytes(b"sqlite conversation")
     service = DataManagementService(layout)
 
     payload = service.export_zip()
@@ -19,6 +21,7 @@ def test_export_contains_current_soul_files_with_scoped_paths(tmp_path):
         names = archive.namelist()
         assert "soul_a/profile/basic_info.md" in names
         assert "soul_a/conversation.json" in names
+        assert "soul_a/conversation.sqlite3" in names
         assert all(".." not in name for name in names)
 
 
@@ -49,9 +52,16 @@ def test_archive_conversation_moves_index_and_candidate_provenance(tmp_path):
     candidates = FakeCandidates()
     service = DataManagementService(layout)
 
-    archived = service.archive_conversation(memory_store, candidates, "session-test")
+    messages = [{"role": "user", "content": "SQLite 中的当前会话"}]
+    archived = service.archive_conversation(
+        memory_store,
+        candidates,
+        "session-test",
+        conversation_messages=messages,
+    )
 
     assert (archived / "conversation.json").exists()
+    assert json.loads((archived / "conversation.json").read_text(encoding="utf-8")) == messages
     assert (archived / "memory-summaries.json").exists()
     assert (archived / "conversation-candidates.json").exists()
     assert memory_store.deleted == ["conversation"]
@@ -64,6 +74,7 @@ def test_reset_demo_archives_user_data_before_restoring_template(tmp_path):
     (layout.profile_dir / "basic_info.md").write_text("姓名: PRIVATE", encoding="utf-8")
     (layout.voice_dir / "reference_audio.wav").write_bytes(b"private voice")
     layout.conversation_path.write_text("private chat", encoding="utf-8")
+    layout.conversation_db_path.write_bytes(b"private sqlite chat")
     layout.candidates_path.write_text("[]", encoding="utf-8")
     layout.feedback_path.write_text("[]", encoding="utf-8")
     demo = tmp_path / "demo"
@@ -76,6 +87,7 @@ def test_reset_demo_archives_user_data_before_restoring_template(tmp_path):
     assert (backup / "profile" / "basic_info.md").read_text(encoding="utf-8") == "姓名: PRIVATE"
     assert (backup / "voice" / "reference_audio.wav").read_bytes() == b"private voice"
     assert (backup / "conversation.json").read_text(encoding="utf-8") == "private chat"
+    assert (backup / "conversation.sqlite3").read_bytes() == b"private sqlite chat"
     assert (backup / "feedback.json").read_text(encoding="utf-8") == "[]"
     assert (layout.profile_dir / "basic_info.md").read_text(encoding="utf-8") == "姓名: 演示人物"
     assert not layout.conversation_path.exists()

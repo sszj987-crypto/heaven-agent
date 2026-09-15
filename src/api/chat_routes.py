@@ -82,6 +82,7 @@ async def delete_chat_history(container: ApplicationContainer = Depends(get_cont
             archived = container.data_management.archive_conversation(
                 container.memory_store,
                 container.candidates,
+                conversation_messages=loop.messages,
             )
             loop.delete_history()
     log.info("会话已归档: %s", archived)

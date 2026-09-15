@@ -13,6 +13,7 @@ def test_initialize_creates_scoped_soul_directories(tmp_path):
     assert layout.daily_dir.is_dir()
     assert layout.memory_db_dir.is_dir()
     assert layout.conversation_path.parent == layout.soul_dir
+    assert layout.conversation_db_path == layout.soul_dir / "conversation.sqlite3"
 
 
 def test_migration_copies_and_backs_up_without_deleting_legacy_data(tmp_path):

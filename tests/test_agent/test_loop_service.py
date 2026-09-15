@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from src.agent.context import PipelineContext
+from src.agent.conversation_store import ConversationStore
 from src.agent.loop import AgentLoop
 from src.services.safety import SafetyPolicy
 from src.agent.modules.postllm.quality_check import QualityCheckModule
@@ -47,6 +48,51 @@ async def test_run_once_serializes_concurrent_turns_for_one_soul():
     assert first.response == "收到"
     assert second.response == "收到"
     assert [message["content"] for message in loop.messages] == ["第一条", "收到", "第二条", "收到"]
+
+
+async def test_completed_turn_is_restored_from_sqlite_after_restart(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.sqlite3")
+    first = AgentLoop(
+        llm=MeasuringLLM(),
+        pipeline=FakePipeline(),
+        history_store=store,
+        max_conversation_turns=20,
+        max_regenerate=0,
+    )
+
+    await first.run_once("第一条")
+    restored = AgentLoop(
+        llm=MeasuringLLM(),
+        pipeline=FakePipeline(),
+        history_store=ConversationStore(store.path),
+        max_conversation_turns=20,
+        max_regenerate=0,
+    )
+
+    assert [message["content"] for message in restored.messages] == ["第一条", "收到"]
+
+
+async def test_persistence_failure_rolls_back_in_memory_turn():
+    class FailingStore:
+        def load(self):
+            return []
+
+        def replace(self, _messages):
+            raise OSError("disk unavailable")
+
+    loop = AgentLoop(
+        llm=MeasuringLLM(),
+        pipeline=FakePipeline(),
+        history_store=FailingStore(),
+        max_conversation_turns=20,
+        max_regenerate=0,
+    )
+
+    import pytest
+    with pytest.raises(OSError, match="disk unavailable"):
+        await loop.run_once("不应留在内存")
+
+    assert loop.messages == []
 
 
 async def test_stream_once_emits_reply_deltas_before_the_completed_context():

@@ -32,6 +32,8 @@ class SoulDataLayout:
         self.dialect_path = self.voice_dir / "dialect.json"
         self.daily_dir = self.soul_dir / "memory" / "daily"
         self.memory_db_dir = self.soul_dir / "memory" / "index"
+        self.conversation_db_path = self.soul_dir / "conversation.sqlite3"
+        # Legacy JSON is retained as an import source and readable archive format.
         self.conversation_path = self.soul_dir / "conversation.json"
         self.candidates_path = self.soul_dir / "memory" / "candidates.json"
         self.feedback_path = self.soul_dir / "feedback.json"

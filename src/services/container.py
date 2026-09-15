@@ -10,6 +10,7 @@ from typing import Any
 
 from ..agent.loop import AgentLoop
 from ..agent.pipeline import Pipeline
+from ..agent.conversation_store import ConversationStore
 from ..config.settings import Settings
 from ..data.layout import SoulDataLayout
 from ..llm.manager import LLMManager
@@ -41,6 +42,7 @@ class ApplicationContainer:
     voice: Any
     voice_installed: bool
     agent_loop: AgentLoop
+    conversation_store: ConversationStore
     distiller: SoulDistiller
     candidates: CandidateStore
     candidate_service: CandidateService
@@ -91,11 +93,13 @@ class ApplicationContainer:
         voice_installed, _ = voice_dependencies_available(sys.platform, root)
         voice = _create_selected_voice(settings, layout.voice_dir, root, settings.soul_id)
         dialect_settings = DialectSettings(layout.dialect_path)
+        conversation_store = ConversationStore(layout.conversation_db_path)
+        conversation_store.migrate_json_once(layout.conversation_path)
         pipeline = Pipeline()
         agent_loop = AgentLoop(
-            history_path=str(layout.conversation_path),
             llm=llm,
             pipeline=pipeline,
+            history_store=conversation_store,
             max_conversation_turns=settings.max_conversation_turns,
             max_regenerate=settings.max_regenerate,
         )
@@ -143,6 +147,7 @@ class ApplicationContainer:
             voice=voice,
             voice_installed=voice_installed,
             agent_loop=agent_loop,
+            conversation_store=conversation_store,
             distiller=distiller,
             candidates=candidates,
             candidate_service=candidate_service,

@@ -38,9 +38,16 @@ class DataManagementService:
         memory_store,
         candidate_store,
         archive_name: str | None = None,
+        *,
+        conversation_messages: list[dict] | None = None,
     ):
         """Archive all session-derived artifacts, then remove them from active lookup."""
         destination = self._layout.archive_chat(archive_name)
+        if conversation_messages is not None:
+            atomic_write_text(
+                destination / "conversation.json",
+                json.dumps(conversation_messages, ensure_ascii=False, indent=2),
+            )
 
         if memory_store is not None:
             summaries = memory_store.get_by_dimension("conversation")
@@ -90,6 +97,7 @@ class DataManagementService:
             (self._layout.profile_dir, backup / "profile"),
             (self._layout.voice_dir, backup / "voice"),
             (self._layout.daily_dir, backup / "memory" / "daily"),
+            (self._layout.conversation_db_path, backup / "conversation.sqlite3"),
             (self._layout.conversation_path, backup / "conversation.json"),
             (self._layout.candidates_path, backup / "memory" / "candidates.json"),
             (self._layout.feedback_path, backup / "feedback.json"),
